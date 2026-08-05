@@ -86,6 +86,7 @@ type executorImpl[SP ShardProcessor] struct {
 	logger                *zap.Logger
 	shardProcessorFactory ShardProcessorFactory[SP]
 	namespace             string
+	executorID            string
 	stopC                 chan struct{}
 	heartBeatInterval     time.Duration
 	ttlShard              time.Duration
@@ -432,6 +433,10 @@ func (e *executorImpl[SP]) shardCleanUpLoop(ctx context.Context) {
 
 func (e *executorImpl[SP]) GetNamespace() string {
 	return e.namespace
+}
+
+func (e *executorImpl[SP]) GetExecutorID() string {
+	return e.executorID
 }
 
 func (e *executorImpl[SP]) SetMetadata(metadata map[string]string) {
