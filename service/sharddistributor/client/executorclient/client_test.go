@@ -2,6 +2,7 @@ package executorclient
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/client/clientcommon"
 )
+
+const testUniqueID = "00000000-0000-0000-0000-000000000001"
 
 func TestModule(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -71,6 +74,9 @@ func TestNewExecutor_ExecutorID(t *testing.T) {
 		Logger:                zap.NewNop(),
 		ShardProcessorFactory: NewMockShardProcessorFactory[*MockShardProcessor](ctrl),
 		TimeSource:            clock.NewMockedTimeSource(),
+		Metadata: ExecutorMetadata{
+			clientcommon.GrpcAddressMetadataKey: "127.0.0.1:7953",
+		},
 		Config: clientcommon.Config{
 			Namespaces: []clientcommon.NamespaceConfig{
 				{
@@ -87,6 +93,7 @@ func TestNewExecutor_ExecutorID(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, first.GetExecutorID())
+	assert.Contains(t, first.GetExecutorID(), "127.0.0.1:7953")
 	assert.Equal(t, first.GetExecutorID(), first.GetExecutorID(), "executor ID should be stable across calls")
 	assert.NotEqual(t, first.GetExecutorID(), second.GetExecutorID(), "each executor should heartbeat under its own ID")
 
@@ -95,6 +102,102 @@ func TestNewExecutor_ExecutorID(t *testing.T) {
 	require.NoError(t, first.(*executorImpl[*MockShardProcessor]).heartbeater.DrainingHeartbeat())
 	require.NoError(t, second.(*executorImpl[*MockShardProcessor]).heartbeater.DrainingHeartbeat())
 	assert.Equal(t, []string{first.GetExecutorID(), second.GetExecutorID()}, heartbeatedIDs)
+}
+
+func TestGetGRPCAddress(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata ExecutorMetadata
+		want     string
+	}{
+		{
+			name: "canonical address",
+			metadata: ExecutorMetadata{
+				clientcommon.GrpcAddressMetadataKey: "127.0.0.1:7953",
+				"hostIP":                            "10.0.0.1",
+				"grpc":                              "1234",
+			},
+			want: "127.0.0.1:7953",
+		},
+		{
+			name: "Cadence metadata fallback",
+			metadata: ExecutorMetadata{
+				"hostIP": "127.0.0.1",
+				"grpc":   "7953",
+			},
+			want: "127.0.0.1:7953",
+		},
+		{
+			name: "incomplete address",
+			metadata: ExecutorMetadata{
+				"hostIP": "127.0.0.1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, getGRPCAddress(tt.metadata))
+		})
+	}
+}
+
+func TestBuildExecutorID(t *testing.T) {
+	tests := []struct {
+		name     string
+		hostname string
+		address  string
+		want     string
+	}{
+		{
+			name:     "hostname and address",
+			hostname: "executor-1",
+			address:  "127.0.0.1:7953",
+			want:     "executor-1-127.0.0.1:7953-" + testUniqueID,
+		},
+		{
+			name:     "hostname only",
+			hostname: "executor-1",
+			want:     "executor-1-" + testUniqueID,
+		},
+		{
+			name:     "slashes are replaced",
+			hostname: "executor/1",
+			address:  "dns:///executor:7953",
+			want:     "executor_1-dns:___executor:7953-" + testUniqueID,
+		},
+		{
+			name: "uuid only",
+			want: testUniqueID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, buildExecutorID(tt.hostname, tt.address, testUniqueID))
+		})
+	}
+}
+
+func TestBuildExecutorID_LimitsLengthAndPreservesUUID(t *testing.T) {
+	const address = "127.0.0.1:7953"
+
+	executorID := buildExecutorID(
+		strings.Repeat("hostname/", 100),
+		address,
+		testUniqueID,
+	)
+
+	assert.Len(t, executorID, maxExecutorIDLength)
+	assert.NotContains(t, executorID, "/")
+	assert.True(t, strings.HasSuffix(executorID, "-"+address+"-"+testUniqueID))
+}
+
+func TestBuildExecutorID_LimitsLongAddressAndPreservesUUID(t *testing.T) {
+	executorID := buildExecutorID("", strings.Repeat("a", maxExecutorIDLength), testUniqueID)
+
+	assert.Len(t, executorID, maxExecutorIDLength)
+	assert.True(t, strings.HasSuffix(executorID, "-"+testUniqueID))
 }
 
 // Create distinct mock processor types for testing multiple namespaces
