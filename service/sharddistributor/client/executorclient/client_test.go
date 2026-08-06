@@ -128,7 +128,7 @@ func TestBuildExecutorID(t *testing.T) {
 func TestBuildExecutorID_LimitsHostnameLengthAndPreservesUUID(t *testing.T) {
 	executorID := buildExecutorID(strings.Repeat("hostname/", 100), testUniqueID)
 
-	assert.Len(t, executorID, maxHostNameLength+len("@"+testUniqueID))
+	assert.Len(t, executorID, maxHostnameLength+len("@"+testUniqueID))
 	assert.NotContains(t, executorID, "/")
 	assert.True(t, strings.HasSuffix(executorID, "@"+testUniqueID))
 }
