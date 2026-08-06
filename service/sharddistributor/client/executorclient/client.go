@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/uber-go/tally"
@@ -27,6 +28,8 @@ import (
 // assigned the requested shard. Callers that interpret shard ownership should
 // treat this as an ownership-loss signal rather than an internal error.
 var ErrShardProcessNotFound = errors.New("shard process not found")
+
+const maxHostnameLength = 128
 
 type Client interface {
 	Heartbeat(context.Context, *types.ExecutorHeartbeatRequest, ...yarpc.CallOption) (*types.ExecutorHeartbeatResponse, error)
@@ -127,13 +130,13 @@ func newExecutorWithConfig[SP ShardProcessor](params Params[SP], namespaceConfig
 		return nil, fmt.Errorf("create shard distributor executor client: %w", err)
 	}
 
-	// TODO: get executor ID from environment
-	executorID := uuid.New().String()
-
 	hostname, err := os.Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("get hostname: %w", err)
 	}
+
+	uniqueID := uuid.New().String()
+	executorID := buildExecutorID(hostname, uniqueID)
 
 	metricsScope := params.MetricsScope.Tagged(map[string]string{
 		metrics.OperationTagName: metricsconstants.ShardDistributorExecutorOperationTagName,
@@ -178,6 +181,20 @@ func newExecutorWithConfig[SP ShardProcessor](params Params[SP], namespaceConfig
 	)
 
 	return executor, nil
+}
+
+func buildExecutorID(hostname, uniqueID string) string {
+	// Executor IDs are etcd path segments, so they cannot contain slashes.
+	hostname = strings.ReplaceAll(hostname, "/", "_")
+
+	// Trim the hostname to ensure it's not unbounded
+	if len(hostname) > maxHostnameLength {
+		hostname = hostname[:maxHostnameLength]
+	}
+
+	executorID := hostname + "@" + uniqueID
+
+	return executorID
 }
 
 func createShardDistributorExecutorClient(client Client, metricsScope tally.Scope) (Client, error) {
