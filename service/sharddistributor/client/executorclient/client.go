@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 
@@ -30,7 +29,7 @@ import (
 // treat this as an ownership-loss signal rather than an internal error.
 var ErrShardProcessNotFound = errors.New("shard process not found")
 
-const maxExecutorIDLength = 256
+const maxHostnameLength = 128
 
 type Client interface {
 	Heartbeat(context.Context, *types.ExecutorHeartbeatRequest, ...yarpc.CallOption) (*types.ExecutorHeartbeatResponse, error)
@@ -135,9 +134,9 @@ func newExecutorWithConfig[SP ShardProcessor](params Params[SP], namespaceConfig
 	if err != nil {
 		return nil, fmt.Errorf("get hostname: %w", err)
 	}
-	grpcAddress := getGRPCAddress(params.Metadata)
+
 	uniqueID := uuid.New().String()
-	executorID := buildExecutorID(hostname, grpcAddress, uniqueID)
+	executorID := buildExecutorID(hostname, uniqueID)
 
 	metricsScope := params.MetricsScope.Tagged(map[string]string{
 		metrics.OperationTagName: metricsconstants.ShardDistributorExecutorOperationTagName,
@@ -184,48 +183,18 @@ func newExecutorWithConfig[SP ShardProcessor](params Params[SP], namespaceConfig
 	return executor, nil
 }
 
-func getGRPCAddress(metadata ExecutorMetadata) string {
-	if grpcAddress := metadata[clientcommon.GrpcAddressMetadataKey]; grpcAddress != "" {
-		return grpcAddress
-	}
-
-	hostIP := metadata["hostIP"]
-	grpcPort := metadata["grpc"]
-	if hostIP == "" || grpcPort == "" {
-		return ""
-	}
-	return net.JoinHostPort(hostIP, grpcPort)
-}
-
-func buildExecutorID(hostname, address, uniqueID string) string {
-	// Executor IDs are etcd path segments, so replace slashes to keep the structure of the keys valid.
+func buildExecutorID(hostname, uniqueID string) string {
+	// Executor IDs are etcd path segments, so they cannot contain slashes.
 	hostname = strings.ReplaceAll(hostname, "/", "_")
-	address = strings.ReplaceAll(address, "/", "_")
 
-	maxDescriptiveLength := maxExecutorIDLength - len(uniqueID) - 1
-	if len(address) > maxDescriptiveLength {
-		address = address[:maxDescriptiveLength]
-	}
-
-	maxHostnameLength := maxDescriptiveLength
-	if address != "" {
-		maxHostnameLength = max(0, maxDescriptiveLength-len(address)-1)
-	}
+	// Trim the hostname to ensure it's not unbounded
 	if len(hostname) > maxHostnameLength {
 		hostname = hostname[:maxHostnameLength]
 	}
 
-	descriptivePart := hostname
-	if address != "" {
-		if descriptivePart != "" {
-			descriptivePart += "-"
-		}
-		descriptivePart += address
-	}
-	if descriptivePart == "" {
-		return uniqueID
-	}
-	return descriptivePart + "-" + uniqueID
+	executorID := hostname + "@" + uniqueID
+
+	return executorID
 }
 
 func createShardDistributorExecutorClient(client Client, metricsScope tally.Scope) (Client, error) {
