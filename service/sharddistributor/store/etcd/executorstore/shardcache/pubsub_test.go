@@ -111,14 +111,18 @@ func TestExecutorStatePubSub_DroppedUpdateLog(t *testing.T) {
 	initialState := map[*store.ShardOwner][]string{
 		{ExecutorID: "initial-executor", Metadata: map[string]string{}}: {"initial-shard"},
 	}
+	// Provide the channel with the initial assignment view, which is enqueued outside pub/sub tracking.
 	ch <- initialState
 
+	// The first publish replaces the initial assignment view and starts tracking update times.
 	timeSource.Advance(time.Second)
 	pubsub.publish(map[*store.ShardOwner][]string{
 		{ExecutorID: "executor-1", Metadata: map[string]string{}}: {"shard-1"},
 	})
 
-	timeSource.Advance(100 * time.Millisecond)
+	// Leave the replacement pending until the next publish.
+	expectedInterval := 100 * time.Millisecond
+	timeSource.Advance(expectedInterval)
 	latestState := map[*store.ShardOwner][]string{
 		{ExecutorID: "executor-2", Metadata: map[string]string{}}: {"shard-2"},
 	}
@@ -127,14 +131,15 @@ func TestExecutorStatePubSub_DroppedUpdateLog(t *testing.T) {
 	dropLogs := logs.FilterMessage("subscriber not keeping up, dropping intermediate state update and replacing with latest").All()
 	require.Len(t, dropLogs, 2)
 
+	// The first drop has no previously tracked publish or pending update.
 	firstDrop := dropLogs[0].ContextMap()
 	assert.Equal(t, "test-ns", firstDrop["shard-namespace"])
 	assert.NotContains(t, firstDrop, "state-update-publish-interval")
 	assert.NotContains(t, firstDrop, "subscriber-pending-update-duration")
 
 	secondDrop := dropLogs[1].ContextMap()
-	assert.Equal(t, 100*time.Millisecond, secondDrop["state-update-publish-interval"])
-	assert.Equal(t, 100*time.Millisecond, secondDrop["subscriber-pending-update-duration"])
+	assert.Equal(t, expectedInterval, secondDrop["state-update-publish-interval"])
+	assert.Equal(t, expectedInterval, secondDrop["subscriber-pending-update-duration"])
 
 	assert.Equal(t, latestState, <-ch)
 }
@@ -148,18 +153,26 @@ func TestExecutorStatePubSub_ConsumerProgressResetsPendingUpdateDuration(t *test
 
 	ch, unsub := pubsub.subscribe(context.Background())
 	defer unsub()
+	// Provide the channel with the initial assignment view, which is enqueued outside pub/sub tracking.
 	ch <- map[*store.ShardOwner][]string{}
 
+	// Replace the initial assignment view, then consume the replacement to simulate progress.
 	timeSource.Advance(time.Second)
 	pubsub.publish(map[*store.ShardOwner][]string{})
 	<-ch
 
-	timeSource.Advance(time.Second)
-	pubsub.publish(map[*store.ShardOwner][]string{})
+	// Enqueue a new update, then publish twice without consuming it.
 	timeSource.Advance(time.Second)
 	pubsub.publish(map[*store.ShardOwner][]string{})
 
+	publishInterval := time.Second
+	timeSource.Advance(publishInterval)
+	pubsub.publish(map[*store.ShardOwner][]string{})
+	timeSource.Advance(publishInterval)
+	pubsub.publish(map[*store.ShardOwner][]string{})
+
 	dropLogs := logs.FilterMessage("subscriber not keeping up, dropping intermediate state update and replacing with latest").All()
-	require.Len(t, dropLogs, 2)
-	assert.Equal(t, time.Second, dropLogs[1].ContextMap()["subscriber-pending-update-duration"])
+	require.Len(t, dropLogs, 3)
+	expectedPendingDuration := 2 * publishInterval
+	assert.Equal(t, expectedPendingDuration, dropLogs[2].ContextMap()["subscriber-pending-update-duration"])
 }
