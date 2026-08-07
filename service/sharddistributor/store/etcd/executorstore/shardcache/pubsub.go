@@ -76,8 +76,11 @@ func (p *executorStatePubSub) publish(state map[*store.ShardOwner][]string) {
 	defer p.mu.Unlock()
 
 	now := p.timeSource.Now()
-	publishInterval := now.Sub(p.lastPublishedAt)
+	var publishInterval time.Duration
 	hasPublishInterval := p.hasPreviousPublish
+	if hasPublishInterval {
+		publishInterval = now.Sub(p.lastPublishedAt)
+	}
 	p.lastPublishedAt = now
 	p.hasPreviousPublish = true
 
