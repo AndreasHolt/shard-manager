@@ -33,31 +33,33 @@ func PlanInitialPlacement(state *store.NamespaceState, shardIDs []string) ([]pla
 }
 
 func executorLoads(state *store.NamespaceState) (map[string]executorLoad, float64) {
+	assignments := make(map[string][]string)
 	loads := make(map[string]executorLoad, len(state.Executors))
-	totalSmoothedLoad := 0.0
-	totalShardCount := 0
 
 	for executorID, executorState := range state.Executors {
 		if executorState.Status != types.ExecutorStatusACTIVE {
 			continue
 		}
+		shards := make([]string, 0, len(state.ShardAssignments[executorID].AssignedShards))
 		var load executorLoad
 		for shardID := range state.ShardAssignments[executorID].AssignedShards {
+			shards = append(shards, shardID)
 			load.shardCount++
-			if stats, ok := state.ShardStats[shardID]; ok {
-				load.smoothedLoad += stats.SmoothedLoad
-			}
 		}
-		totalShardCount += load.shardCount
-		totalSmoothedLoad += load.smoothedLoad
+		assignments[executorID] = shards
 		loads[executorID] = load
 	}
 
-	var averageShardLoad float64
-	if totalShardCount > 0 {
-		averageShardLoad = totalSmoothedLoad / float64(totalShardCount)
+	averageMeasured := averageMeasuredShardLoad(assignments, state.ShardStats)
+	for executorID, shards := range assignments {
+		load := loads[executorID]
+		for _, shardID := range shards {
+			load.smoothedLoad += effectiveShardLoad(shardID, state.ShardStats, averageMeasured)
+		}
+		loads[executorID] = load
 	}
-	return loads, averageShardLoad
+
+	return loads, averageMeasured
 }
 
 func chooseExecutorAndUpdateLoads(loads map[string]executorLoad, averageShardLoad float64) (string, error) {

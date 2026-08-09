@@ -87,23 +87,26 @@ func cloneAssignments(assignments map[string][]string) map[string][]string {
 }
 
 func computeExecutorLoads(currentAssignments map[string][]string, state *store.NamespaceState) (map[string]float64, float64, bool) {
-	loads := make(map[string]float64, len(currentAssignments))
-	total := 0.0
+	if len(currentAssignments) == 0 {
+		return nil, 0, false
+	}
 
+	loads := make(map[string]float64, len(currentAssignments))
+	for executorID := range currentAssignments {
+		loads[executorID] = 0 // executors with no shards yet still need an entry so it can be a move destination
+	}
+
+	averageMeasured := averageMeasuredShardLoad(currentAssignments, state.ShardStats)
+	total := 0.0
 	for executorID, shards := range currentAssignments {
 		for _, shardID := range shards {
-			stats, ok := state.ShardStats[shardID]
-			if ok {
-				loads[executorID] += stats.SmoothedLoad
-				total += stats.SmoothedLoad
-			}
+			load := effectiveShardLoad(shardID, state.ShardStats, averageMeasured)
+			loads[executorID] += load
+			total += load
 		}
 	}
-	if len(loads) == 0 {
-		return loads, 0, false
-	}
 
-	mean := total / float64(len(loads))
+	mean := total / float64(len(currentAssignments))
 	return loads, mean, true
 }
 
@@ -333,7 +336,7 @@ func findBestShardForMove(
 		}
 
 		stats, ok := state.ShardStats[shard]
-		if !ok {
+		if !ok || !hasSmoothedLoadUpdate(stats) {
 			continue
 		}
 		if perShardCooldown > 0 && !stats.LastMoveTime.IsZero() && now.Sub(stats.LastMoveTime) < perShardCooldown {
