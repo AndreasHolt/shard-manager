@@ -1,7 +1,6 @@
 package shardcache
 
 import (
-	"context"
 	"sync"
 	"time"
 
@@ -44,8 +43,9 @@ func newExecutorStatePubSub(logger log.Logger, namespace string, timeSource cloc
 	}
 }
 
-// Subscribe returns a channel that receives executor state updates.
-func (p *executorStatePubSub) subscribe(ctx context.Context) (chan map[*store.ShardOwner][]string, func()) {
+// subscribe returns a channel that receives executor state updates.
+// snapshot is called under p.mu — it must not re-acquire p.mu.
+func (p *executorStatePubSub) subscribe(snapshot func() map[*store.ShardOwner][]string) (chan map[*store.ShardOwner][]string, func()) {
 	uniqueID := uuid.New().String()
 	subscriber := &executorStateSubscriber{
 		updates: make(chan map[*store.ShardOwner][]string, 1),
@@ -54,6 +54,7 @@ func (p *executorStatePubSub) subscribe(ctx context.Context) (chan map[*store.Sh
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.subscribers[uniqueID] = subscriber
+	subscriber.updates <- snapshot()
 
 	unSub := func() {
 		p.unSubscribe(uniqueID)

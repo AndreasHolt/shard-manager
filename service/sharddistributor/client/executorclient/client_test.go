@@ -2,6 +2,7 @@ package executorclient
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/client/clientcommon"
 )
+
+const testUniqueID = "00000000-0000-0000-0000-000000000001"
 
 func TestModule(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -95,6 +98,39 @@ func TestNewExecutor_ExecutorID(t *testing.T) {
 	require.NoError(t, first.(*executorImpl[*MockShardProcessor]).heartbeater.DrainingHeartbeat())
 	require.NoError(t, second.(*executorImpl[*MockShardProcessor]).heartbeater.DrainingHeartbeat())
 	assert.Equal(t, []string{first.GetExecutorID(), second.GetExecutorID()}, heartbeatedIDs)
+}
+
+func TestBuildExecutorID(t *testing.T) {
+	tests := []struct {
+		name     string
+		hostname string
+		want     string
+	}{
+		{
+			name:     "plain hostname",
+			hostname: "executor-1",
+			want:     "executor-1@" + testUniqueID,
+		},
+		{
+			name:     "slashes are replaced",
+			hostname: "executor/1",
+			want:     "executor_1@" + testUniqueID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, buildExecutorID(tt.hostname, testUniqueID))
+		})
+	}
+}
+
+func TestBuildExecutorID_LimitsHostnameLengthAndPreservesUUID(t *testing.T) {
+	executorID := buildExecutorID(strings.Repeat("hostname/", 100), testUniqueID)
+
+	assert.Len(t, executorID, maxHostnameLength+len("@"+testUniqueID))
+	assert.NotContains(t, executorID, "/")
+	assert.True(t, strings.HasSuffix(executorID, "@"+testUniqueID))
 }
 
 // Create distinct mock processor types for testing multiple namespaces
