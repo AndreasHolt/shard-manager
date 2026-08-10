@@ -16,11 +16,15 @@ import (
 
 var emptyState = map[*store.ShardOwner][]string{}
 
+func snapshotOf(state map[*store.ShardOwner][]string) func() map[*store.ShardOwner][]string {
+	return func() map[*store.ShardOwner][]string { return state }
+}
+
 func TestExecutorStatePubSub_SubscribeUnsubscribe(t *testing.T) {
 	defer goleak.VerifyNone(t)
 	pubsub := newExecutorStatePubSub(testlogger.New(t), "test-ns")
 
-	ch, unsub := pubsub.subscribe(emptyState)
+	ch, unsub := pubsub.subscribe(snapshotOf(emptyState))
 	assert.NotNil(t, ch)
 	assert.Len(t, pubsub.subscribers, 1)
 
@@ -43,7 +47,7 @@ func TestExecutorStatePubSub_SubscribeDeliversInitialState(t *testing.T) {
 		{ExecutorID: "exec-1", Metadata: map[string]string{}}: {"shard-1"},
 	}
 
-	ch, unsub := pubsub.subscribe(initialState)
+	ch, unsub := pubsub.subscribe(snapshotOf(initialState))
 	defer unsub()
 
 	got := <-ch
@@ -58,7 +62,7 @@ func TestExecutorStatePubSub_PublishDoesNotDeadlock(t *testing.T) {
 	// subscribe seeds the channel with the initial state, filling the
 	// single buffer slot. A subsequent publish must complete without
 	// blocking — it drains the stale value and replaces it.
-	ch, unsub := pubsub.subscribe(emptyState)
+	ch, unsub := pubsub.subscribe(snapshotOf(emptyState))
 
 	updateState := map[*store.ShardOwner][]string{
 		{ExecutorID: "update", Metadata: map[string]string{}}: {"s2"},
@@ -108,8 +112,8 @@ func TestExecutorStatePubSub_Publish(t *testing.T) {
 
 	t.Run("multiple subscribers receive updates", func(t *testing.T) {
 		pubsub := newExecutorStatePubSub(testlogger.New(t), "test-ns")
-		ch1, unsub1 := pubsub.subscribe(emptyState)
-		ch2, unsub2 := pubsub.subscribe(emptyState)
+		ch1, unsub1 := pubsub.subscribe(snapshotOf(emptyState))
+		ch2, unsub2 := pubsub.subscribe(snapshotOf(emptyState))
 		defer unsub1()
 		defer unsub2()
 
@@ -143,7 +147,7 @@ func TestExecutorStatePubSub_Publish(t *testing.T) {
 	t.Run("slow consumer receives latest state", func(t *testing.T) {
 		pubsub := newExecutorStatePubSub(testlogger.New(t), "test-ns")
 
-		ch, unsub := pubsub.subscribe(emptyState)
+		ch, unsub := pubsub.subscribe(snapshotOf(emptyState))
 		defer unsub()
 
 		// Drain initial state

@@ -31,15 +31,16 @@ func newExecutorStatePubSub(logger log.Logger, namespace string) *executorStateP
 	}
 }
 
-// subscribe returns a channel that receives executor state updates, seeded with initialState.
-func (p *executorStatePubSub) subscribe(initialState map[*store.ShardOwner][]string) (chan map[*store.ShardOwner][]string, func()) {
+// subscribe returns a channel that receives executor state updates.
+// snapshot is called under p.mu — it must not re-acquire p.mu.
+func (p *executorStatePubSub) subscribe(snapshot func() map[*store.ShardOwner][]string) (chan map[*store.ShardOwner][]string, func()) {
 	ch := make(chan map[*store.ShardOwner][]string, 1)
 	uniqueID := uuid.New().String()
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.subscribers[uniqueID] = ch
-	ch <- initialState
+	ch <- snapshot()
 
 	unSub := func() {
 		p.unSubscribe(uniqueID)

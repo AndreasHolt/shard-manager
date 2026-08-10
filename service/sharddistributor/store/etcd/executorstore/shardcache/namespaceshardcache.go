@@ -217,8 +217,7 @@ func (n *namespaceShardToExecutor) fetchAndCacheExecutorStatistics(ctx context.C
 }
 
 func (n *namespaceShardToExecutor) Subscribe(ctx context.Context) (<-chan map[*store.ShardOwner][]string, func()) {
-	initialState := n.getExecutorState()
-	subCh, unSub := n.pubSub.subscribe(initialState)
+	subCh, unSub := n.pubSub.subscribe(n.getExecutorState)
 	return subCh, unSub
 }
 
