@@ -91,14 +91,11 @@ func computeExecutorLoads(currentAssignments map[string][]string, state *store.N
 		return nil, 0, false
 	}
 
-	loads := make(map[string]float64, len(currentAssignments))
-	for executorID := range currentAssignments {
-		loads[executorID] = 0 // executors with no shards yet still need an entry so it can be a move destination
-	}
-
 	averageMeasured := averageMeasuredShardLoad(currentAssignments, state.ShardStats)
+	loads := make(map[string]float64, len(currentAssignments))
 	total := 0.0
 	for executorID, shards := range currentAssignments {
+		loads[executorID] = 0
 		for _, shardID := range shards {
 			load := effectiveShardLoad(shardID, state.ShardStats, averageMeasured)
 			loads[executorID] += load
