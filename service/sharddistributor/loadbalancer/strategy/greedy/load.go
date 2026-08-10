@@ -2,10 +2,8 @@ package greedy
 
 import "github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 
-func hasSmoothedLoadUpdate(stats store.ShardStatistics) bool {
-	return !stats.LastUpdateTime.IsZero()
-}
-
+// averageMeasuredShardLoad calculates the average smoothed load of all
+// shards in the assignments that have received at least one load report.
 func averageMeasuredShardLoad(
 	assignments map[string][]string,
 	shardStats map[string]store.ShardStatistics,
@@ -28,6 +26,8 @@ func averageMeasuredShardLoad(
 	return sum / float64(count)
 }
 
+// effectiveShardLoad returns the shard's smoothed load if it has received at
+// least one load report, otherwise the average measured shard load.
 func effectiveShardLoad(
 	shardID string,
 	shardStats map[string]store.ShardStatistics,
@@ -38,4 +38,9 @@ func effectiveShardLoad(
 		return averageMeasured
 	}
 	return stats.SmoothedLoad
+}
+
+// hasSmoothedLoadUpdate reports whether the shard has received at least one load report.
+func hasSmoothedLoadUpdate(stats store.ShardStatistics) bool {
+	return !stats.LastUpdateTime.IsZero()
 }
