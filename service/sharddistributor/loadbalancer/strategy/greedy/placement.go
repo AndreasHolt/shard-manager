@@ -33,26 +33,11 @@ func PlanInitialPlacement(state *store.NamespaceState, shardIDs []string) ([]pla
 }
 
 func executorLoads(state *store.NamespaceState) (map[string]executorLoad, float64) {
-	assignments := make(map[string][]string)
-	loads := make(map[string]executorLoad, len(state.Executors))
-
-	for executorID, executorState := range state.Executors {
-		if executorState.Status != types.ExecutorStatusACTIVE {
-			continue
-		}
-		shards := make([]string, 0, len(state.ShardAssignments[executorID].AssignedShards))
-		var load executorLoad
-		for shardID := range state.ShardAssignments[executorID].AssignedShards {
-			shards = append(shards, shardID)
-			load.shardCount++
-		}
-		assignments[executorID] = shards
-		loads[executorID] = load
-	}
-
-	averageMeasured := averageMeasuredShardLoad(assignments, state.ShardStats)
-	for executorID, shards := range assignments {
-		load := loads[executorID]
+	activeAssignments := activeExecutorAssignments(state)
+	averageMeasured := averageMeasuredShardLoad(activeAssignments, state.ShardStats)
+	loads := make(map[string]executorLoad, len(activeAssignments))
+	for executorID, shards := range activeAssignments {
+		load := executorLoad{shardCount: len(shards)}
 		for _, shardID := range shards {
 			load.smoothedLoad += effectiveShardLoad(shardID, state.ShardStats, averageMeasured)
 		}
@@ -60,6 +45,21 @@ func executorLoads(state *store.NamespaceState) (map[string]executorLoad, float6
 	}
 
 	return loads, averageMeasured
+}
+
+func activeExecutorAssignments(state *store.NamespaceState) map[string][]string {
+	assignments := make(map[string][]string)
+	for executorID, executorState := range state.Executors {
+		if executorState.Status != types.ExecutorStatusACTIVE {
+			continue
+		}
+		shards := make([]string, 0, len(state.ShardAssignments[executorID].AssignedShards))
+		for shardID := range state.ShardAssignments[executorID].AssignedShards {
+			shards = append(shards, shardID)
+		}
+		assignments[executorID] = shards
+	}
+	return assignments
 }
 
 func chooseExecutorAndUpdateLoads(loads map[string]executorLoad, averageShardLoad float64) (string, error) {
