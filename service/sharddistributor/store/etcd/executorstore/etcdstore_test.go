@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/fx/fxtest"
 	"go.uber.org/mock/gomock"
@@ -922,7 +923,7 @@ func (t *trackingTxn) Commit() (*clientv3.TxnResponse, error) {
 	return t.commitFn(t.opsCount)
 }
 
-func TestCommitGuardedOps_Batching(t *testing.T) {
+func TestCommitOps_Batching(t *testing.T) {
 	const testMaxTxnOps = 128
 	const testMaxOpsPerBatch = testMaxTxnOps - guardOpOverhead
 
@@ -994,8 +995,9 @@ func TestCommitGuardedOps_Batching(t *testing.T) {
 				client: mockClient,
 				cfg:    &config.Config{MaxEtcdTxnOps: dynamicproperties.GetIntPropertyFn(testMaxTxnOps)},
 			}
-			err := s.commitGuardedOps(context.Background(), ops, store.NopGuard())
+			responses, err := s.commitOps(context.Background(), ops, store.NopGuard())
 			require.NoError(t, err)
+			assert.Len(t, responses, tt.expectedBatches, "one response per committed batch")
 
 			require.Len(t, batchSizes, tt.expectedBatches)
 
@@ -1009,7 +1011,7 @@ func TestCommitGuardedOps_Batching(t *testing.T) {
 	}
 }
 
-func TestCommitGuardedOps_CommitError_StopsEarly(t *testing.T) {
+func TestCommitOps_CommitError_StopsEarly(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := etcdclient.NewMockClient(ctrl)
 
@@ -1039,14 +1041,14 @@ func TestCommitGuardedOps_CommitError_StopsEarly(t *testing.T) {
 		client: mockClient,
 		cfg:    &config.Config{MaxEtcdTxnOps: dynamicproperties.GetIntPropertyFn(testMaxTxnOps)},
 	}
-	err := s.commitGuardedOps(context.Background(), ops, store.NopGuard())
+	_, err := s.commitOps(context.Background(), ops, store.NopGuard())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "commit batch")
 	assert.Equal(t, 1, commitCount, "should stop after first failing batch")
 }
 
-func TestCommitGuardedOps_LeadershipLost_StopsEarly(t *testing.T) {
+func TestCommitOps_LeadershipLost_StopsEarly(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := etcdclient.NewMockClient(ctrl)
 
@@ -1072,14 +1074,14 @@ func TestCommitGuardedOps_LeadershipLost_StopsEarly(t *testing.T) {
 		client: mockClient,
 		cfg:    &config.Config{MaxEtcdTxnOps: dynamicproperties.GetIntPropertyFn(testMaxTxnOps)},
 	}
-	err := s.commitGuardedOps(context.Background(), ops, store.NopGuard())
+	_, err := s.commitOps(context.Background(), ops, store.NopGuard())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "leadership may have changed")
 	assert.Equal(t, 1, commitCount, "should stop after first leadership failure")
 }
 
-func TestCommitGuardedOps_GuardError(t *testing.T) {
+func TestCommitOps_GuardError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockClient := etcdclient.NewMockClient(ctrl)
 
@@ -1100,10 +1102,96 @@ func TestCommitGuardedOps_GuardError(t *testing.T) {
 		client: mockClient,
 		cfg:    &config.Config{MaxEtcdTxnOps: dynamicproperties.GetIntPropertyFn(128)},
 	}
-	err := s.commitGuardedOps(context.Background(), ops, failingGuard)
+	_, err := s.commitOps(context.Background(), ops, failingGuard)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "apply transaction guard")
+}
+
+// The guard is applied to every batch, not just the first.
+// A leadership change part-way through a large write must stop the remaining batches.
+func TestCommitOps_GuardAppliedPerBatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := etcdclient.NewMockClient(ctrl)
+
+	const testMaxTxnOps = 10
+	ops := make([]clientv3.Op, testMaxTxnOps+5)
+	for i := range ops {
+		ops[i] = clientv3.OpDelete(fmt.Sprintf("/test/key/%d", i))
+	}
+
+	for range 2 {
+		txn := &trackingTxn{
+			commitFn: func(numOps int) (*clientv3.TxnResponse, error) {
+				return &clientv3.TxnResponse{Succeeded: true}, nil
+			},
+		}
+		mockClient.EXPECT().Txn(gomock.Any()).Return(txn)
+	}
+
+	guardCalls := 0
+	countingGuard := func(txn store.Txn) (store.Txn, error) {
+		guardCalls++
+		return txn, nil
+	}
+
+	s := &executorStoreImpl{
+		client: mockClient,
+		cfg:    &config.Config{MaxEtcdTxnOps: dynamicproperties.GetIntPropertyFn(testMaxTxnOps)},
+	}
+	responses, err := s.commitOps(context.Background(), ops, countingGuard)
+
+	require.NoError(t, err)
+	assert.Len(t, responses, 2)
+	assert.Equal(t, 2, guardCalls, "each batch gets its own guarded transaction")
+}
+
+// UndrainShards maps per-op delete counts back to its input by walking the returned
+// responses in order, so the responses must line up with how the ops were submitted.
+func TestCommitOps_ResponsesFollowSubmissionOrder(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockClient := etcdclient.NewMockClient(ctrl)
+
+	const testMaxTxnOps = 4
+	ops := make([]clientv3.Op, 7)
+	for i := range ops {
+		ops[i] = clientv3.OpDelete(fmt.Sprintf("/test/key/%d", i))
+	}
+
+	// Each batch reports its own op count as a delete count, so the flattened
+	// sequence of responses reveals the order the batches were committed in.
+	for range 3 {
+		txn := &trackingTxn{
+			commitFn: func(numOps int) (*clientv3.TxnResponse, error) {
+				batch := make([]*etcdserverpb.ResponseOp, 0, numOps)
+				for i := range numOps {
+					batch = append(batch, &etcdserverpb.ResponseOp{
+						Response: &etcdserverpb.ResponseOp_ResponseDeleteRange{
+							ResponseDeleteRange: &etcdserverpb.DeleteRangeResponse{Deleted: int64(i)},
+						},
+					})
+				}
+				return &clientv3.TxnResponse{Succeeded: true, Responses: batch}, nil
+			},
+		}
+		mockClient.EXPECT().Txn(gomock.Any()).Return(txn)
+	}
+
+	s := &executorStoreImpl{
+		client: mockClient,
+		cfg:    &config.Config{MaxEtcdTxnOps: dynamicproperties.GetIntPropertyFn(testMaxTxnOps)},
+	}
+	responses, err := s.commitOps(context.Background(), ops, store.NopGuard())
+	require.NoError(t, err)
+
+	var deleted []int64
+	for _, resp := range responses {
+		for _, opResp := range resp.Responses {
+			deleted = append(deleted, opResp.GetResponseDeleteRange().Deleted)
+		}
+	}
+	assert.Equal(t, []int64{0, 1, 2, 0, 1, 2, 0}, deleted,
+		"every submitted op has exactly one response, in submission order")
 }
 
 // TestResetNamespace verifies that ResetNamespace removes every key under the
@@ -1165,6 +1253,215 @@ func TestResetNamespace(t *testing.T) {
 		require.NoError(t, err)
 		assert.Greater(t, respSibling.Count, int64(0), "sibling namespace must not be wiped")
 	})
+}
+
+// TestDrainShardsLifecycle walks the drain/undrain lifecycle through the etcd-backed
+// store: reading an empty set, draining, reading back via both GetDrainedShards and
+// GetState, draining idempotently, and undraining.
+func TestDrainShardsLifecycle(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	drained, err := executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Empty(t, drained, "no shards are drained before the first DrainShards call")
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"shard-B", "shard-A"}))
+
+	drained, err = executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shard-A", "shard-B"}, drained, "the drained set reads back sorted")
+
+	// Draining an already-drained shard alongside a new one is idempotent: the
+	// existing shard stays drained instead of erroring.
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"shard-A", "shard-C"}))
+
+	drained, err = executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shard-A", "shard-B", "shard-C"}, drained)
+
+	state, err := executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]struct{}{
+		"shard-A": {},
+		"shard-B": {},
+		"shard-C": {},
+	}, state.DrainedShards, "GetState exposes the same set to the rebalance loop")
+
+	removed, err := executorStore.UndrainShards(ctx, tc.Namespace, []string{"shard-A", "shard-B"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"shard-A", "shard-B"}, removed)
+
+	drained, err = executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shard-C"}, drained)
+}
+
+// UndrainShards reports only the shards it actually removed. A shard that was never
+// drained, or that a previous call already removed, is excluded — that is what makes
+// the result meaningful to an operator rather than an echo of the request.
+func TestUndrainShardsReportsOnlyActualRemovals(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"shard-A"}))
+
+	removed, err := executorStore.UndrainShards(ctx, tc.Namespace, []string{"shard-A", "never-drained"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shard-A"}, removed, "never-drained was absent, so it is not reported")
+
+	removed, err = executorStore.UndrainShards(ctx, tc.Namespace, []string{"shard-A", "never-drained"})
+	require.NoError(t, err)
+	assert.Empty(t, removed, "repeating the same undrain removes nothing further")
+}
+
+// Draining must not leak across namespaces: the drained keyspace is per-namespace and
+// a prefix scan for one namespace must not observe another's keys.
+func TestDrainShardsIsolatedPerNamespace(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	otherNamespace := tc.Namespace + "-other"
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"shard-A"}))
+	require.NoError(t, executorStore.DrainShards(ctx, otherNamespace, []string{"shard-Z"}))
+
+	drained, err := executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shard-A"}, drained)
+
+	drained, err = executorStore.GetDrainedShards(ctx, otherNamespace)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shard-Z"}, drained)
+}
+
+// Draining more shards than MaxEtcdTxnOps must transparently chunk the transactions
+// rather than fail with "etcdserver: too many operations in txn request". Undrain has
+// to map per-op delete counts back to inputs correctly across those chunk boundaries.
+func TestDrainShardsChunksOverTxnLimit(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const numShards = 300 // more than 2x the configured MaxEtcdTxnOps of 128
+	shardIDs := make([]string, 0, numShards)
+	for i := 0; i < numShards; i++ {
+		shardIDs = append(shardIDs, fmt.Sprintf("bulk-shard-%04d", i))
+	}
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, shardIDs))
+
+	drained, err := executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, shardIDs, drained)
+
+	removed, err := executorStore.UndrainShards(ctx, tc.Namespace, shardIDs)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, shardIDs, removed, "every shard is attributed to the right op across chunks")
+
+	drained, err = executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Empty(t, drained)
+}
+
+func TestDrainShardsEmptyInput(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, nil))
+
+	removed, err := executorStore.UndrainShards(ctx, tc.Namespace, nil)
+	require.NoError(t, err)
+	assert.Empty(t, removed)
+
+	drained, err := executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Empty(t, drained)
+}
+
+// A shard ID that cannot round-trip through a key must be rejected at write time.
+// Writing it would succeed but every read would skip it, leaving a drained shard
+// that no API can report or undrain.
+func TestDrainUndrainRejectUnrepresentableShardIDs(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for name, shardID := range map[string]string{
+		"empty":          "",
+		"slash":          "shard/A",
+		"trailing slash": "shard-A/",
+		"nested path":    "a/b/c",
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Error(t, executorStore.DrainShards(ctx, tc.Namespace, []string{shardID}))
+			_, err := executorStore.UndrainShards(ctx, tc.Namespace, []string{shardID})
+			require.Error(t, err)
+		})
+	}
+
+	// The rejection happens before any write, so a bad ID alongside a good one
+	// leaves nothing drained rather than partially applying.
+	require.Error(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"shard-A", "bad/id"}))
+
+	drained, err := executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Empty(t, drained, "a rejected batch must not write its valid shards")
+}
+
+// ResetNamespace wipes the whole namespace prefix, so drained-shard keys must go with
+// it. Otherwise a reset namespace would come back with stale shards still blocked.
+func TestResetNamespaceClearsDrainedShards(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"shard-A", "shard-B"}))
+
+	_, err := executorStore.ResetNamespace(ctx, tc.Namespace)
+	require.NoError(t, err)
+
+	drained, err := executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Empty(t, drained)
+}
+
+// A key that does not parse as a drained-shard key is skipped rather than failing the
+// read, so one malformed key cannot stall GetState and with it the rebalance loop.
+func TestLoadDrainedShardSetSkipsMalformedKeys(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"shard-A"}))
+
+	// Nested key: within the drained prefix but not a valid single-segment shard ID.
+	// Only reachable by writing directly to etcd now that DrainShards validates input.
+	malformed := etcdkeys.BuildDrainedShardKey(tc.EtcdPrefix, tc.Namespace, "shard-B") + "/nested"
+	_, err := tc.Client.Put(ctx, malformed, "")
+	require.NoError(t, err)
+
+	drained, err := executorStore.GetDrainedShards(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"shard-A"}, drained)
+
+	// GetState reads the same keyspace through the transaction path, so it must
+	// tolerate the malformed key too.
+	state, err := executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]struct{}{"shard-A": {}}, state.DrainedShards)
 }
 
 func createStore(t *testing.T, tc *testhelper.StoreTestCluster) store.Store {
