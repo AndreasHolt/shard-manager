@@ -206,8 +206,8 @@ func TestExecutorStatePubSub_DroppedUpdateLog(t *testing.T) {
 	// The first drop has no previously tracked publish or pending update.
 	firstDrop := dropLogs[0].ContextMap()
 	assert.Equal(t, "test-ns", firstDrop["shard-namespace"])
-	assert.NotContains(t, firstDrop, "state-update-publish-interval")
-	assert.NotContains(t, firstDrop, "subscriber-pending-update-duration")
+	assert.Equal(t, time.Duration(0), firstDrop["state-update-publish-interval"])
+	assert.Equal(t, time.Duration(0), firstDrop["subscriber-pending-update-duration"])
 
 	secondDrop := dropLogs[1].ContextMap()
 	assert.Equal(t, expectedInterval, secondDrop["state-update-publish-interval"])

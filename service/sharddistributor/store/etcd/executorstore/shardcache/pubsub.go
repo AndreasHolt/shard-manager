@@ -13,9 +13,8 @@ import (
 )
 
 type executorStateSubscriber struct {
-	updates               chan map[*store.ShardOwner][]string
-	pendingUpdateSince    time.Time
-	hasPendingUpdateSince bool
+	updates            chan map[*store.ShardOwner][]string
+	pendingUpdateSince time.Time
 }
 
 // executorStatePubSub manages subscriptions to executor state changes.
@@ -25,13 +24,12 @@ type executorStateSubscriber struct {
 // the latest state, so the subscriber always catches up to the most recent
 // state rather than being stuck on a stale intermediate state.
 type executorStatePubSub struct {
-	mu                 sync.Mutex
-	subscribers        map[string]*executorStateSubscriber
-	logger             log.Logger
-	namespace          string
-	timeSource         clock.TimeSource
-	lastPublishedAt    time.Time
-	hasPreviousPublish bool
+	mu              sync.Mutex
+	subscribers     map[string]*executorStateSubscriber
+	logger          log.Logger
+	namespace       string
+	timeSource      clock.TimeSource
+	lastPublishedAt time.Time
 }
 
 func newExecutorStatePubSub(logger log.Logger, namespace string, timeSource clock.TimeSource) *executorStatePubSub {
@@ -77,54 +75,43 @@ func (p *executorStatePubSub) publish(state map[*store.ShardOwner][]string) {
 	defer p.mu.Unlock()
 
 	now := p.timeSource.Now()
-	var publishInterval time.Duration
-	hasPublishInterval := p.hasPreviousPublish
-	if hasPublishInterval {
-		publishInterval = now.Sub(p.lastPublishedAt)
-	}
-	p.lastPublishedAt = now
-	p.hasPreviousPublish = true
 
 	for _, sub := range p.subscribers {
 		select {
 		case sub.updates <- state:
 			sub.pendingUpdateSince = now
-			sub.hasPendingUpdateSince = true
 		default:
-			p.logDroppedUpdate(sub, now, publishInterval, hasPublishInterval)
-
 			// Preserve pendingUpdateSince when we drain the pending update ourselves.
 			// Reset it if the consumer drained the update concurrently.
 			select {
 			case <-sub.updates:
+				p.logDroppedUpdate(sub, now)
 			default:
 				sub.pendingUpdateSince = now
 			}
 			sub.updates <- state
-			if !sub.hasPendingUpdateSince {
+			if sub.pendingUpdateSince.IsZero() {
 				sub.pendingUpdateSince = now
-				sub.hasPendingUpdateSince = true
 			}
 		}
 	}
+
+	p.lastPublishedAt = now
 }
 
-func (p *executorStatePubSub) logDroppedUpdate(
-	sub *executorStateSubscriber,
-	now time.Time,
-	publishInterval time.Duration,
-	hasPublishInterval bool,
-) {
-	logTags := []tag.Tag{tag.ShardNamespace(p.namespace)}
-	if hasPublishInterval {
-		logTags = append(logTags, tag.StateUpdatePublishInterval(publishInterval))
+func (p *executorStatePubSub) logDroppedUpdate(sub *executorStateSubscriber, now time.Time) {
+	var publishInterval time.Duration
+	if !p.lastPublishedAt.IsZero() {
+		publishInterval = now.Sub(p.lastPublishedAt)
 	}
-	if sub.hasPendingUpdateSince {
-		logTags = append(logTags, tag.SubscriberPendingUpdateDuration(now.Sub(sub.pendingUpdateSince)))
+	var pendingUpdateDuration time.Duration
+	if !sub.pendingUpdateSince.IsZero() {
+		pendingUpdateDuration = now.Sub(sub.pendingUpdateSince)
 	}
-
 	p.logger.Warn(
 		"subscriber not keeping up, dropping intermediate state update and replacing with latest",
-		logTags...,
+		tag.ShardNamespace(p.namespace),
+		tag.StateUpdatePublishInterval(publishInterval),
+		tag.SubscriberPendingUpdateDuration(pendingUpdateDuration),
 	)
 }
