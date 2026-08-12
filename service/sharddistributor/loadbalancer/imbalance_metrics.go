@@ -36,13 +36,14 @@ func EmitAssignmentImbalanceMetrics(
 		reportedLoad := 0.0
 		smoothedLoad := 0.0
 
-		heartbeat, heartbeatOK := namespaceState.Executors[executorID]
+		heartbeat := namespaceState.Executors[executorID]
 		for _, shardID := range shards {
 			totalAssigned++
 
-			if !heartbeatOK || heartbeat.ReportedShards == nil {
-				continue
-			} else if shardReport, ok := heartbeat.ReportedShards[shardID]; ok && shardReport != nil {
+			// Reported load depends on the heartbeat, but smoothed load below is
+			// read from persisted shard stats, so it is computed even when the
+			// executor has no heartbeat entry or reports.
+			if shardReport := heartbeat.ReportedShards[shardID]; shardReport != nil {
 				reportedLoad += shardReport.ShardLoad
 			}
 

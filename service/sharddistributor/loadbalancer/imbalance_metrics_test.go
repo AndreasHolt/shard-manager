@@ -42,6 +42,43 @@ func TestEmitAssignmentImbalanceMetrics_GreedyEmitsSmoothedLoadMetrics(t *testin
 	metricsScope.AssertExpectations(t)
 }
 
+// Smoothed load comes from persisted shard stats, so it must be computed even
+// for executors that have no heartbeat entry or a nil ReportedShards map
+// (e.g. a first heartbeat), and such shards must count as missing-stats only
+// when stats are actually absent.
+func TestEmitAssignmentImbalanceMetrics_GreedySmoothedLoadWithoutHeartbeatReports(t *testing.T) {
+	cfg := loadBalancingModeConfig(config.LoadBalancingModeGREEDY)
+	now := time.Now()
+
+	assignments := map[string][]string{
+		"exec-no-heartbeat": {"shard-1"},
+		"exec-nil-reports":  {"shard-2", "shard-3"},
+	}
+	state := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"exec-nil-reports": {ReportedShards: nil},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"shard-1": {SmoothedLoad: 30, LastUpdateTime: now},
+			"shard-2": {SmoothedLoad: 10, LastUpdateTime: now},
+			// shard-3 has no stats and must count towards the missing ratio.
+		},
+	}
+
+	metricsScope := &metricmocks.Scope{}
+	// No reported loads at all: both gauges are zero.
+	metricsScope.On("UpdateGauge", metrics.ShardDistributorAssignmentLoadMaxOverMean, 0.0).Once()
+	metricsScope.On("UpdateGauge", metrics.ShardDistributorAssignmentLoadCV, 0.0).Once()
+	// Smoothed loads are 30 (exec-no-heartbeat) and 10 (exec-nil-reports): mean 20, max 30.
+	metricsScope.On("UpdateGauge", metrics.ShardDistributorAssignmentSmoothedLoadMaxOverMean, 1.5).Once()
+	metricsScope.On("UpdateGauge", metrics.ShardDistributorAssignmentSmoothedLoadCV, 0.5).Once()
+	metricsScope.On("UpdateGauge", metrics.ShardDistributorAssignmentSmoothedLoadMissingRatio, 1.0/3.0).Once()
+
+	EmitAssignmentImbalanceMetrics(cfg, testNamespace, metricsScope, assignments, state)
+
+	metricsScope.AssertExpectations(t)
+}
+
 func loadBalancingModeConfig(mode string) *config.Config {
 	return &config.Config{
 		LoadBalancingMode: func(namespace string) string {

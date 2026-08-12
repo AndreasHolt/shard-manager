@@ -154,12 +154,13 @@ func (s *executorStoreImpl) RecordHeartbeat(ctx context.Context, namespace, exec
 		return fmt.Errorf("record heartbeat: %w", err)
 	}
 	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
-		statsUpdates, err := s.calcUpdatedStatistics(ctx, namespace, executorID, request.ReportedShards)
-		if err != nil {
-			return fmt.Errorf("calculate shard statistics updates: %w", err)
-		}
-		if err := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); err != nil {
-			return fmt.Errorf("apply shard statistics updates: %w", err)
+		// The heartbeat is already persisted and the assignment response does not depend on statistics,
+		// so a stats failure must not fail the heartbeat.
+		statsUpdates, statsErr := s.calcUpdatedStatistics(ctx, namespace, executorID, request.ReportedShards)
+		if statsErr != nil {
+			s.logger.Error("failed to calculate shard statistics updates", tag.ShardNamespace(namespace), tag.ShardExecutor(executorID), tag.Error(statsErr))
+		} else if statsErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); statsErr != nil {
+			s.logger.Error("failed to apply shard statistics updates", tag.ShardNamespace(namespace), tag.ShardExecutor(executorID), tag.Error(statsErr))
 		}
 	}
 
@@ -452,22 +453,22 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 
 	// TODO: Should be extracted to a higher level so that statistics updates are prepared
 	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
+		// A failure preparing or applying stats must never block shard assignment or stale-executor cleanup.
 		statsUpdates, errUpdate := s.prepareShardStatisticsUpdates(ctx, namespace, request.NewState.ShardAssignments)
 		if errUpdate != nil {
-			return fmt.Errorf("prepare shard statistics: %w", errUpdate)
+			s.logger.Error("failed to prepare shard statistics updates", tag.ShardNamespace(namespace), tag.Error(errUpdate))
+		} else {
+			defer func() {
+				// Apply the shard statistics updates after the main transaction commits.
+				// Only apply if there was no error in the main transaction.
+				if err != nil {
+					return
+				}
+				if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
+					s.logger.Error("failed to apply shard statistics updates", tag.ShardNamespace(namespace), tag.Error(updateErr))
+				}
+			}()
 		}
-
-		defer func() {
-			// Apply the shard statistics updates after the main transaction commits.
-			// Only apply if there was no error in the main transaction.
-			if err != nil {
-				return
-			}
-			if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
-				s.logger.Error("failed to apply shard statistics updates", tag.Error(updateErr))
-				err = updateErr
-			}
-		}()
 	}
 
 	// 1. Prepare operations to delete stale executors and add comparisons to ensure they haven't been modified
