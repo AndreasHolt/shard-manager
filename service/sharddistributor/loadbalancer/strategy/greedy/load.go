@@ -40,15 +40,15 @@ func effectiveShardLoad(
 	return smoothedLoad
 }
 
-// hasSmoothedLoadUpdate reports whether the shard has received at least one load report.
-func hasSmoothedLoadUpdate(stats store.ShardStatistics) bool {
-	return !stats.LastUpdateTime.IsZero()
-}
-
 func measuredShardLoad(shardID string, shardStats map[string]store.ShardStatistics) (float64, bool) {
 	stats, ok := shardStats[shardID]
 	if !ok || !hasSmoothedLoadUpdate(stats) {
 		return 0, false
 	}
 	return stats.SmoothedLoad, true
+}
+
+// hasSmoothedLoadUpdate reports whether the shard has received at least one load report.
+func hasSmoothedLoadUpdate(stats store.ShardStatistics) bool {
+	return !stats.LastUpdateTime.IsZero()
 }
