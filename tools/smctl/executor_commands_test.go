@@ -131,7 +131,7 @@ func TestGetExecutorState(t *testing.T) {
 			wantErr: "--" + FlagExecutorID + " is required",
 		},
 		{
-			name: "RPC error includes operation name",
+			name: "API error surfaces EntityNotExists",
 			args: []string{
 				"smctl",
 				"-n", "ns-1",
@@ -145,10 +145,10 @@ func TestGetExecutorState(t *testing.T) {
 						Namespace:  "ns-1",
 						ExecutorID: "missing",
 					}).
-					Return(nil, errors.New("executor not found"))
+					Return(nil, &types.EntityNotExistsError{Message: "executor not found ns-1:missing"})
 				return setupResult{client: mc}
 			},
-			wantErr: "GetExecutorState: executor not found",
+			wantErr: "GetExecutorState: executor not found ns-1:missing",
 		},
 		{
 			name: "factory error is propagated",
