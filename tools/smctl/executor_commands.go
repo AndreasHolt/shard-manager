@@ -2,7 +2,6 @@ package smctl
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -61,9 +60,9 @@ func runListExecutors(
 	out io.Writer,
 	cf ClientFactory,
 ) error {
-	namespace := cmd.String(FlagNamespace)
-	if namespace == "" {
-		return fmt.Errorf("--%s is required", FlagNamespace)
+	namespace, err := requiredStringFlag(cmd, FlagNamespace)
+	if err != nil {
+		return err
 	}
 
 	client, err := cf.ShardManagerClient(cmd)
@@ -88,12 +87,7 @@ func runListExecutors(
 			Namespace: resp.GetNamespace(),
 			Executors: summaries,
 		}
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(envelope); err != nil {
-			return fmt.Errorf("encode response: %w", err)
-		}
-		return nil
+		return writeIndentedJSON(out, envelope)
 	}
 
 	return renderExecutorsTable(out, summaries)
@@ -125,14 +119,14 @@ func runGetExecutorState(
 	out io.Writer,
 	cf ClientFactory,
 ) error {
-	namespace := cmd.String(FlagNamespace)
-	if namespace == "" {
-		return fmt.Errorf("--%s is required", FlagNamespace)
+	namespace, err := requiredStringFlag(cmd, FlagNamespace)
+	if err != nil {
+		return err
 	}
 
-	executorID := cmd.String(FlagExecutorID)
-	if executorID == "" {
-		return fmt.Errorf("--%s is required", FlagExecutorID)
+	executorID, err := requiredStringFlag(cmd, FlagExecutorID)
+	if err != nil {
+		return err
 	}
 
 	client, err := cf.ShardManagerClient(cmd)
@@ -151,12 +145,7 @@ func runGetExecutorState(
 		return fmt.Errorf("GetExecutorState: %w", err)
 	}
 
-	enc := json.NewEncoder(out)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(resp); err != nil {
-		return fmt.Errorf("encode response: %w", err)
-	}
-	return nil
+	return writeIndentedJSON(out, resp)
 }
 
 type executorSummary struct {

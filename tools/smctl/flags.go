@@ -1,6 +1,11 @@
 package smctl
 
-import "time"
+import (
+	"fmt"
+	"time"
+
+	cliv3 "github.com/urfave/cli/v3"
+)
 
 // Flag names used by smctl. Connection flags are persistent on the root
 // command so every subcommand inherits them, mirroring how the Cadence CLI
@@ -40,3 +45,11 @@ const (
 
 	defaultContextTimeout = 10 * time.Second
 )
+
+func requiredStringFlag(cmd *cliv3.Command, name string) (string, error) {
+	value := cmd.String(name)
+	if value == "" {
+		return "", fmt.Errorf("--%s is required", name)
+	}
+	return value, nil
+}
