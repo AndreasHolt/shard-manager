@@ -11,8 +11,9 @@ const (
 	FlagTLSCertPath    = "tls-cert-path"
 	FlagContextTimeout = "context-timeout"
 
-	FlagNamespace = "namespace"
-	FlagShardKey  = "shard-key"
+	FlagNamespace  = "namespace"
+	FlagShardKey   = "shard-key"
+	FlagExecutorID = "executor-id"
 )
 
 // Connection defaults for talking to a locally-running shard-manager.
