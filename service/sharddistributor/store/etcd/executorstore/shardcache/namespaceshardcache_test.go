@@ -3,6 +3,7 @@ package shardcache
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -355,7 +356,7 @@ func TestNamespaceShardToExecutor_namespaceRefreshLoop_triggersRefresh(t *testin
 
 	// Mock Get call for refresh
 	tc.etcdClient.EXPECT().
-		Get(gomock.Any(), tc.executorPrefix, gomock.Any()).
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
 		Return(
 			&clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 1}, Kvs: []*mvccpb.KeyValue{
 				{
@@ -407,7 +408,7 @@ func TestNamespaceShardToExecutor_namespaceRefreshLoop_HungRefreshDoesNotBlockSt
 	tc.e.refreshTimeout = 50 * time.Millisecond
 
 	tc.etcdClient.EXPECT().
-		Get(gomock.Any(), tc.executorPrefix, gomock.Any()).
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, _ string, _ ...clientv3.OpOption) (*clientv3.GetResponse, error) {
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -439,7 +440,7 @@ func TestNamespaceShardToExecutor_namespaceRefreshLoop_HungRefreshDoesNotBlockSt
 	}
 }
 
-func TestNamespaceShardToExecutor_replaceExecutorState_skipsStaleRevision(t *testing.T) {
+func TestNamespaceShardToExecutor_replaceNamespaceState_skipsStaleRevision(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	logger := testlogger.New(t)
@@ -457,22 +458,25 @@ func TestNamespaceShardToExecutor_replaceExecutorState_skipsStaleRevision(t *tes
 	ownerB := &store.ShardOwner{ExecutorID: "exec-b", Metadata: map[string]string{}}
 
 	// Apply revision 10
-	e.replaceExecutorState(10,
+	e.replaceNamespaceState(10,
 		map[string]*store.ShardOwner{"shard-1": ownerA},
 		map[*store.ShardOwner][]string{ownerA: {"shard-1"}},
 		map[string]int64{"exec-a": 10},
 		map[string]*store.ShardOwner{"exec-a": ownerA},
+		map[string]struct{}{"shard-1": {}},
 	)
 
 	got := e.getExecutorState()
 	require.Len(t, got, 1)
+	assertShardDrained(t, e, "shard-1", true)
 
 	// Apply revision 5 (stale) — should be ignored
-	e.replaceExecutorState(5,
+	e.replaceNamespaceState(5,
 		map[string]*store.ShardOwner{"shard-2": ownerB},
 		map[*store.ShardOwner][]string{ownerB: {"shard-2"}},
 		map[string]int64{"exec-b": 5},
 		map[string]*store.ShardOwner{"exec-b": ownerB},
+		map[string]struct{}{"shard-2": {}},
 	)
 
 	got = e.getExecutorState()
@@ -480,19 +484,230 @@ func TestNamespaceShardToExecutor_replaceExecutorState_skipsStaleRevision(t *tes
 	for owner := range got {
 		assert.Equal(t, "exec-a", owner.ExecutorID)
 	}
+	assertShardDrained(t, e, "shard-1", true)
+	assertShardDrained(t, e, "shard-2", false)
 
 	// Apply revision 20 (newer) — should be accepted
-	e.replaceExecutorState(20,
+	e.replaceNamespaceState(20,
 		map[string]*store.ShardOwner{"shard-2": ownerB},
 		map[*store.ShardOwner][]string{ownerB: {"shard-2"}},
 		map[string]int64{"exec-b": 20},
 		map[string]*store.ShardOwner{"exec-b": ownerB},
+		map[string]struct{}{"shard-2": {}},
 	)
 
 	got = e.getExecutorState()
 	require.Len(t, got, 1)
 	for owner := range got {
 		assert.Equal(t, "exec-b", owner.ExecutorID)
+	}
+	assertShardDrained(t, e, "shard-1", false)
+	assertShardDrained(t, e, "shard-2", true)
+}
+
+// assertShardDrained checks IsShardDrained without letting a cache miss reach etcd; every
+// caller here has already seeded a revision.
+func assertShardDrained(t *testing.T, e *namespaceShardToExecutor, shardID string, expected bool) {
+	t.Helper()
+
+	drained, err := e.IsShardDrained(context.Background(), shardID)
+	require.NoError(t, err)
+	assert.Equal(t, expected, drained, "shard %s drained state", shardID)
+}
+
+// The cache watches the whole namespace, so it must refresh for drain changes, ignore the
+// keyspaces it does not track, and keep treating unchanged executor writes as no-ops.
+func TestNamespaceShardToExecutor_needsRefresh(t *testing.T) {
+	tc := setupNamespaceShardToExecutorTestCase(t)
+	defer tc.ctrl.Finish()
+	defer close(tc.stopCh)
+
+	drainedKey := etcdkeys.BuildDrainedShardKey(tc.prefix, tc.namespace, "shard-1")
+	leaderKey := fmt.Sprintf("%s/%s/leader/1234", tc.prefix, tc.namespace)
+	assignedStateKey := etcdkeys.BuildExecutorKey(tc.prefix, tc.namespace, tc.executorID, etcdkeys.ExecutorAssignedStateKey)
+
+	tests := []struct {
+		name     string
+		events   []*clientv3.Event
+		expected bool
+	}{
+		{
+			name:     "no events",
+			events:   nil,
+			expected: false,
+		},
+		{
+			name: "shard drained",
+			events: []*clientv3.Event{
+				{Type: clientv3.EventTypePut, Kv: &mvccpb.KeyValue{Key: []byte(drainedKey)}},
+			},
+			expected: true,
+		},
+		{
+			// Drain and undrain both store an empty value, so this must not be mistaken
+			// for an unchanged key.
+			name: "shard undrained",
+			events: []*clientv3.Event{
+				{
+					Type:   clientv3.EventTypeDelete,
+					Kv:     &mvccpb.KeyValue{Key: []byte(drainedKey)},
+					PrevKv: &mvccpb.KeyValue{Key: []byte(drainedKey)},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "leader election key is not tracked",
+			events: []*clientv3.Event{
+				{Type: clientv3.EventTypePut, Kv: &mvccpb.KeyValue{Key: []byte(leaderKey), Value: []byte("host-1")}},
+			},
+			expected: false,
+		},
+		{
+			name: "malformed drained shard key",
+			events: []*clientv3.Event{
+				{Type: clientv3.EventTypePut, Kv: &mvccpb.KeyValue{Key: []byte(etcdkeys.BuildDrainedShardsPrefix(tc.prefix, tc.namespace) + "shard/1")}},
+			},
+			expected: false,
+		},
+		{
+			name: "executor assigned state changed",
+			events: []*clientv3.Event{
+				{
+					Type:   clientv3.EventTypePut,
+					Kv:     &mvccpb.KeyValue{Key: []byte(assignedStateKey), Value: []byte("new")},
+					PrevKv: &mvccpb.KeyValue{Key: []byte(assignedStateKey), Value: []byte("old")},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "executor assigned state rewritten with same value",
+			events: []*clientv3.Event{
+				{
+					Type:   clientv3.EventTypePut,
+					Kv:     &mvccpb.KeyValue{Key: []byte(assignedStateKey), Value: []byte("same")},
+					PrevKv: &mvccpb.KeyValue{Key: []byte(assignedStateKey), Value: []byte("same")},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "drain alongside an untracked key",
+			events: []*clientv3.Event{
+				{Type: clientv3.EventTypePut, Kv: &mvccpb.KeyValue{Key: []byte(leaderKey), Value: []byte("host-1")}},
+				{Type: clientv3.EventTypePut, Kv: &mvccpb.KeyValue{Key: []byte(drainedKey)}},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tc.e.needsRefresh(clientv3.WatchResponse{Events: tt.events}))
+		})
+	}
+}
+
+// A single namespace read feeds both maps, so the keys have to be routed by keyspace.
+func TestNamespaceShardToExecutor_partitionNamespaceKVs(t *testing.T) {
+	tc := setupNamespaceShardToExecutorTestCase(t)
+	defer tc.ctrl.Finish()
+	defer close(tc.stopCh)
+
+	assignedStateKey := etcdkeys.BuildExecutorKey(tc.prefix, tc.namespace, tc.executorID, etcdkeys.ExecutorAssignedStateKey)
+	drainedKey := etcdkeys.BuildDrainedShardKey(tc.prefix, tc.namespace, "shard-1")
+	malformedDrainedKey := etcdkeys.BuildDrainedShardsPrefix(tc.prefix, tc.namespace) + "shard/1"
+	leaderKey := fmt.Sprintf("%s/%s/leader/1234", tc.prefix, tc.namespace)
+
+	executorKVs, drainedShards := tc.e.partitionNamespaceKVs([]*mvccpb.KeyValue{
+		{Key: []byte(assignedStateKey), Value: []byte("state")},
+		{Key: []byte(drainedKey)},
+		{Key: []byte(malformedDrainedKey)},
+		{Key: []byte(leaderKey), Value: []byte("host-1")},
+	})
+
+	require.Len(t, executorKVs, 1)
+	assert.Equal(t, assignedStateKey, string(executorKVs[0].Key))
+	assert.Equal(t, map[string]struct{}{"shard-1": {}}, drainedShards)
+}
+
+// A drain and a later undrain must both reach the cache through the namespace watch.
+func TestNamespaceShardToExecutor_namespaceRefreshLoop_refreshesDrainedShards(t *testing.T) {
+	tc := setupNamespaceShardToExecutorTestCase(t)
+	defer tc.ctrl.Finish()
+	defer goleak.VerifyNone(t)
+
+	const shardID = "shard-1"
+	drainedKey := etcdkeys.BuildDrainedShardKey(tc.prefix, tc.namespace, shardID)
+
+	drainedGet := tc.etcdClient.EXPECT().
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
+		Return(&clientv3.GetResponse{
+			Header: &etcdserverpb.ResponseHeader{Revision: 5},
+			Kvs:    []*mvccpb.KeyValue{{Key: []byte(drainedKey)}},
+		}, nil).
+		Times(1)
+
+	tc.etcdClient.EXPECT().
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
+		Return(&clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 6}}, nil).
+		After(drainedGet).
+		Times(1)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tc.e.namespaceRefreshLoop()
+	}()
+
+	// Read the map directly rather than through IsShardDrained, so polling cannot itself
+	// trigger a refresh and consume an expected Get.
+	isDrained := func() bool {
+		tc.e.RLock()
+		defer tc.e.RUnlock()
+		_, drained := tc.e.drainedShards[shardID]
+		return drained
+	}
+
+	tc.watchChan <- clientv3.WatchResponse{
+		Events: []*clientv3.Event{
+			{Type: clientv3.EventTypePut, Kv: &mvccpb.KeyValue{Key: []byte(drainedKey)}},
+		},
+	}
+	require.Eventually(t, isDrained, time.Second, time.Millisecond, "expected the drained shard to reach the cache")
+
+	tc.watchChan <- clientv3.WatchResponse{
+		Events: []*clientv3.Event{
+			{
+				Type:   clientv3.EventTypeDelete,
+				Kv:     &mvccpb.KeyValue{Key: []byte(drainedKey)},
+				PrevKv: &mvccpb.KeyValue{Key: []byte(drainedKey)},
+			},
+		},
+	}
+	require.Eventually(t, func() bool { return !isDrained() }, time.Second, time.Millisecond, "expected the undrained shard to leave the cache")
+
+	close(tc.stopCh)
+	wg.Wait()
+}
+
+// An empty drained set is a loaded state, not a miss, so it must not re-read etcd.
+func TestNamespaceShardToExecutor_IsShardDrained_loadsOnceWhenNothingIsDrained(t *testing.T) {
+	tc := setupNamespaceShardToExecutorTestCase(t)
+	defer tc.ctrl.Finish()
+	defer close(tc.stopCh)
+
+	tc.etcdClient.EXPECT().
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
+		Return(&clientv3.GetResponse{Header: &etcdserverpb.ResponseHeader{Revision: 7}}, nil).
+		Times(1)
+
+	for i := 0; i < 3; i++ {
+		drained, err := tc.e.IsShardDrained(context.Background(), "shard-1")
+		require.NoError(t, err)
+		assert.False(t, drained)
 	}
 }
 
@@ -511,11 +726,12 @@ func TestNamespaceShardToExecutor_Refresh_PublishReflectsLatestStateNotStaleSnap
 	defer unsub()
 
 	// Apply the older state.
-	tc.e.replaceExecutorState(5,
+	tc.e.replaceNamespaceState(5,
 		map[string]*store.ShardOwner{"shard-a": ownerA},
 		map[*store.ShardOwner][]string{ownerA: {"shard-a"}},
 		map[string]int64{"exec-a": 5},
 		map[string]*store.ShardOwner{"exec-a": ownerA},
+		map[string]struct{}{"shard-a": {}},
 	)
 
 	// Hold the pubsub lock so the publish below queues behind it, simulating
@@ -533,11 +749,12 @@ func TestNamespaceShardToExecutor_Refresh_PublishReflectsLatestStateNotStaleSnap
 
 	// A concurrent, newer refresh applies its state while the publish above is
 	// still queued.
-	tc.e.replaceExecutorState(10,
+	tc.e.replaceNamespaceState(10,
 		map[string]*store.ShardOwner{"shard-b": ownerB},
 		map[*store.ShardOwner][]string{ownerB: {"shard-b"}},
 		map[string]int64{"exec-b": 10},
 		map[string]*store.ShardOwner{"exec-b": ownerB},
+		map[string]struct{}{"shard-b": {}},
 	)
 
 	tc.e.pubSub.mu.Unlock()
@@ -828,7 +1045,8 @@ type namespaceShardToExecutorTestCase struct {
 	prefix     string
 	namespace  string
 
-	executorPrefix string
+	// namespacePrefix is what the cache reads: one range covering executors and drained shards.
+	namespacePrefix string
 }
 
 func setupNamespaceShardToExecutorTestCase(t *testing.T) *namespaceShardToExecutorTestCase {
@@ -842,12 +1060,13 @@ func setupNamespaceShardToExecutorTestCase(t *testing.T) *namespaceShardToExecut
 	tc.prefix = "/test-prefix"
 	tc.namespace = "test-namespace"
 	tc.executorID = "executor-1"
-	tc.executorPrefix = etcdkeys.BuildExecutorsPrefix(tc.prefix, tc.namespace)
+	tc.namespacePrefix = etcdkeys.BuildNamespacePrefix(tc.prefix, tc.namespace)
 
-	// Mock the Watch call to return our watch channel
+	// Mock the Watch call to return our watch channel. The prefix is matched exactly: the
+	// watch has to span the whole namespace, or drain changes never reach the cache.
 	tc.watchChan = make(chan clientv3.WatchResponse)
 	tc.etcdClient.EXPECT().
-		Watch(gomock.Any(), gomock.Any(), gomock.Any()).
+		Watch(gomock.Any(), tc.namespacePrefix, gomock.Any()).
 		Return(tc.watchChan).
 		AnyTimes()
 
@@ -878,7 +1097,7 @@ func TestNamespaceShardToExecutor_GetShardOwner_SingleFlightDedup(t *testing.T) 
 	release := make(chan struct{})
 	var getCalls atomic.Int32
 	tc.etcdClient.EXPECT().
-		Get(gomock.Any(), tc.executorPrefix, gomock.Any()).
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, _ string, _ ...clientv3.OpOption) (*clientv3.GetResponse, error) {
 			getCalls.Add(1)
 			select {
@@ -940,7 +1159,7 @@ func TestNamespaceShardToExecutor_GetShardOwner_CallerCancelDoesNotPoisonFlight(
 	release := make(chan struct{})
 	var getCalls atomic.Int32
 	tc.etcdClient.EXPECT().
-		Get(gomock.Any(), tc.executorPrefix, gomock.Any()).
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, _ string, _ ...clientv3.OpOption) (*clientv3.GetResponse, error) {
 			getCalls.Add(1)
 			select {
@@ -1069,7 +1288,7 @@ func TestNamespaceShardToExecutor_GetShardOwner_RefreshContextHasBoundedTimeout(
 
 	var getCalls atomic.Int32
 	tc.etcdClient.EXPECT().
-		Get(gomock.Any(), tc.executorPrefix, gomock.Any()).
+		Get(gomock.Any(), tc.namespacePrefix, gomock.Any()).
 		DoAndReturn(func(ctx context.Context, _ string, _ ...clientv3.OpOption) (*clientv3.GetResponse, error) {
 			getCalls.Add(1)
 			<-ctx.Done()
