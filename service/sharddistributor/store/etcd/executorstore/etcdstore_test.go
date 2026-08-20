@@ -171,7 +171,7 @@ func TestRecordShardStatisticsUpdatesAssignedShard(t *testing.T) {
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
-	_, assignedState, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
+	_, assignedState, previousStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
 	require.NotNil(t, assignedState)
 
@@ -201,7 +201,7 @@ func TestRecordShardStatisticsUpdatesAssignedShard(t *testing.T) {
 	}
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, req))
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, req.ReportedShards, assignedState))
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, req.ReportedShards, assignedState, previousStats))
 
 	nsState, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
@@ -227,7 +227,7 @@ func TestRecordShardStatisticsSkipsNilReport(t *testing.T) {
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, validShardID, executorID))
-	_, assignedState, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
+	_, assignedState, previousStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
 	require.NotNil(t, assignedState)
 
@@ -257,7 +257,7 @@ func TestRecordShardStatisticsSkipsNilReport(t *testing.T) {
 	}
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, req))
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, req.ReportedShards, assignedState))
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, req.ReportedShards, assignedState, previousStats))
 
 	nsState, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
@@ -290,7 +290,7 @@ func TestRecordShardStatisticsPreservesAssignedStatsAndIgnoresUnassignedReports(
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, updatedShardID, executorID))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, preservedShardID, executorID))
 
-	_, assignedState, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
+	_, assignedState, previousStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
 	require.NotNil(t, assignedState)
 
@@ -298,7 +298,7 @@ func TestRecordShardStatisticsPreservesAssignedStatsAndIgnoresUnassignedReports(
 		updatedShardID:   {ShardLoad: 10},
 		preservedShardID: {ShardLoad: 20},
 	}
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, initialReports, assignedState))
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, initialReports, assignedState, previousStats))
 
 	impl := executorStore.(*executorStoreImpl)
 	assert.Eventually(t, func() bool {
@@ -315,7 +315,9 @@ func TestRecordShardStatisticsPreservesAssignedStatsAndIgnoresUnassignedReports(
 		updatedShardID:    {ShardLoad: 30},
 		unassignedShardID: {ShardLoad: 1000},
 	}
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, reports, assignedState))
+	_, assignedState, previousStats, err = executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
+	require.NoError(t, err)
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, reports, assignedState, previousStats))
 
 	after, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
@@ -337,13 +339,13 @@ func TestRecordShardStatisticsDropsStaleAssignmentSnapshot(t *testing.T) {
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
-	_, staleAssignedState, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
+	_, staleAssignedState, previousStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
 	require.NotNil(t, staleAssignedState)
 	impl := executorStore.(*executorStoreImpl)
 
 	reports := map[string]*types.ShardStatusReport{shardID: {ShardLoad: 10}}
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, reports, staleAssignedState))
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, reports, staleAssignedState, previousStats))
 
 	// Changing this executor's assignment invalidates staleAssignedState.ModRevision.
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, "new-shard", executorID))
@@ -352,7 +354,7 @@ func TestRecordShardStatisticsDropsStaleAssignmentSnapshot(t *testing.T) {
 
 	impl.timeSource.(clock.MockedTimeSource).Advance(time.Second)
 	reports[shardID] = &types.ShardStatusReport{ShardLoad: 1000}
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, reports, staleAssignedState))
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, reports, staleAssignedState, previousStats))
 
 	after, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
@@ -392,7 +394,7 @@ func TestGetHeartbeat(t *testing.T) {
 	}, store.NopGuard()))
 
 	// 2. Get the heartbeat back
-	hb, assignedFromDB, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
+	hb, assignedFromDB, statistics, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
 	require.NotNil(t, hb)
 
@@ -401,9 +403,10 @@ func TestGetHeartbeat(t *testing.T) {
 	assert.Equal(t, now, hb.LastHeartbeat)
 	require.NotNil(t, assignedFromDB.AssignedShards)
 	assert.Equal(t, assignState[executorID].AssignedShards, assignedFromDB.AssignedShards)
+	assert.Empty(t, statistics)
 
 	// 4. Test getting a non-existent executor
-	_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, "executor-non-existent")
+	_, _, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, "executor-non-existent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, store.ErrExecutorNotFound)
 }
@@ -761,14 +764,14 @@ func TestDeleteExecutors(t *testing.T) {
 
 		// Verification:
 		// 1. Check deleted executors are gone.
-		_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToDelete1)
+		_, _, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToDelete1)
 		assert.ErrorIs(t, err, store.ErrExecutorNotFound, "Executor 1 should be gone")
 
-		_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToDelete2)
+		_, _, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToDelete2)
 		assert.ErrorIs(t, err, store.ErrExecutorNotFound, "Executor 2 should be gone")
 
 		// 2. Check that the surviving executor remain.
-		_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToKeep)
+		_, _, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToKeep)
 		assert.NoError(t, err, "Surviving executor should still exist")
 	})
 }

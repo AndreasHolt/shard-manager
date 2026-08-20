@@ -28,6 +28,9 @@ func TestMeteredStore_GetHeartbeat(t *testing.T) {
 	assignedState := &store.AssignedState{
 		LastUpdated: time.Now().UTC(),
 	}
+	statistics := map[string]store.ShardStatistics{
+		"shard-1": {SmoothedLoad: 12.3},
+	}
 
 	tests := []struct {
 		name  string
@@ -58,17 +61,18 @@ func TestMeteredStore_GetHeartbeat(t *testing.T) {
 
 			mockHandler.EXPECT().GetHeartbeat(gomock.Any(), _testNamespace, _testExecutorID).Do(func(ctx context.Context, namespace string, executorID string) {
 				timeSource.Advance(time.Second)
-			}).Return(heartbeatRes, assignedState, tt.error)
+			}).Return(heartbeatRes, assignedState, statistics, tt.error)
 
 			mockLogger := log.NewMockLogger(ctrl)
 			mockLogger.EXPECT().Helper().Return(mockLogger).AnyTimes()
 
 			wrapped := NewStore(mockHandler, metricsClient, mockLogger, timeSource).(*meteredStore)
 
-			gotHeartbeat, gotAssignedState, err := wrapped.GetHeartbeat(context.Background(), _testNamespace, _testExecutorID)
+			gotHeartbeat, gotAssignedState, gotStatistics, err := wrapped.GetHeartbeat(context.Background(), _testNamespace, _testExecutorID)
 
 			assert.Equal(t, heartbeatRes, gotHeartbeat)
 			assert.Equal(t, assignedState, gotAssignedState)
+			assert.Equal(t, statistics, gotStatistics)
 			assert.Equal(t, tt.error, err)
 
 			// check that the metrics were emitted for this method

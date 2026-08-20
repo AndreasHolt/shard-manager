@@ -39,12 +39,12 @@ func TestHeartbeat(t *testing.T) {
 			Status:     types.ExecutorStatusACTIVE,
 		}
 
-		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, nil, store.ErrExecutorNotFound)
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, nil, nil, store.ErrExecutorNotFound)
 		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, store.HeartbeatState{
 			LastHeartbeat: now,
 			Status:        types.ExecutorStatusACTIVE,
 		})
-		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, nil)
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, nil, nil)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -79,13 +79,16 @@ func TestHeartbeat(t *testing.T) {
 			},
 			ModRevision: 42,
 		}
-		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, assignedState, nil)
+		previousStats := map[string]store.ShardStatistics{
+			"shard-1": {SmoothedLoad: 10},
+		}
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, assignedState, previousStats, nil)
 		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, store.HeartbeatState{
 			LastHeartbeat:  now,
 			Status:         types.ExecutorStatusACTIVE,
 			ReportedShards: reports,
 		})
-		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, reports, assignedState)
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, reports, assignedState, previousStats)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -110,12 +113,12 @@ func TestHeartbeat(t *testing.T) {
 			Status:        types.ExecutorStatusACTIVE,
 		}
 
-		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, nil, nil)
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, nil, nil, nil)
 		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, store.HeartbeatState{
 			LastHeartbeat: now,
 			Status:        types.ExecutorStatusDRAINING,
 		})
-		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, nil)
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, nil, nil)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -136,7 +139,7 @@ func TestHeartbeat(t *testing.T) {
 		}
 
 		expectedErr := errors.New("storage is down")
-		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, nil, expectedErr)
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, nil, nil, expectedErr)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.Error(t, err)
@@ -160,9 +163,9 @@ func TestHeartbeat(t *testing.T) {
 			},
 		}
 
-		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, assignedState, nil)
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, assignedState, nil, nil)
 		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, gomock.Any()).Return(nil)
-		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, assignedState).Return(errors.New("statistics write failed"))
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, assignedState, nil).Return(errors.New("statistics write failed"))
 
 		response, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -190,7 +193,7 @@ func TestHeartbeat(t *testing.T) {
 			Metadata:   metadata,
 		}
 
-		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, nil, store.ErrExecutorNotFound)
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, nil, nil, store.ErrExecutorNotFound)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.Error(t, err)

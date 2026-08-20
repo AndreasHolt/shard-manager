@@ -180,13 +180,14 @@ func (mr *MockStoreMockRecorder) GetExecutor(ctx, namespace, executorID any) *go
 }
 
 // GetHeartbeat mocks base method.
-func (m *MockStore) GetHeartbeat(ctx context.Context, namespace, executorID string) (*HeartbeatState, *AssignedState, error) {
+func (m *MockStore) GetHeartbeat(ctx context.Context, namespace, executorID string) (*HeartbeatState, *AssignedState, map[string]ShardStatistics, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetHeartbeat", ctx, namespace, executorID)
 	ret0, _ := ret[0].(*HeartbeatState)
 	ret1, _ := ret[1].(*AssignedState)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret2, _ := ret[2].(map[string]ShardStatistics)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
 }
 
 // GetHeartbeat indicates an expected call of GetHeartbeat.
@@ -240,17 +241,17 @@ func (mr *MockStoreMockRecorder) RecordHeartbeat(ctx, namespace, executorID, sta
 }
 
 // RecordShardStatistics mocks base method.
-func (m *MockStore) RecordShardStatistics(ctx context.Context, namespace, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *AssignedState) error {
+func (m *MockStore) RecordShardStatistics(ctx context.Context, namespace, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *AssignedState, previousStats map[string]ShardStatistics) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordShardStatistics", ctx, namespace, executorID, reportedShards, assignedState)
+	ret := m.ctrl.Call(m, "RecordShardStatistics", ctx, namespace, executorID, reportedShards, assignedState, previousStats)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // RecordShardStatistics indicates an expected call of RecordShardStatistics.
-func (mr *MockStoreMockRecorder) RecordShardStatistics(ctx, namespace, executorID, reportedShards, assignedState any) *gomock.Call {
+func (mr *MockStoreMockRecorder) RecordShardStatistics(ctx, namespace, executorID, reportedShards, assignedState, previousStats any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordShardStatistics", reflect.TypeOf((*MockStore)(nil).RecordShardStatistics), ctx, namespace, executorID, reportedShards, assignedState)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordShardStatistics", reflect.TypeOf((*MockStore)(nil).RecordShardStatistics), ctx, namespace, executorID, reportedShards, assignedState, previousStats)
 }
 
 // ResetNamespace mocks base method.

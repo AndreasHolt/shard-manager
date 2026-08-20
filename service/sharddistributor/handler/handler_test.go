@@ -706,7 +706,7 @@ func TestGetExecutorState(t *testing.T) {
 			request: &types.GetExecutorStateRequest{Namespace: _testNamespaceFixed, ExecutorID: "executor1"},
 			setupMocks: func(m *store.MockStore) {
 				m.EXPECT().GetHeartbeat(gomock.Any(), _testNamespaceFixed, "executor1").
-					Return(nil, nil, store.ErrExecutorNotFound)
+					Return(nil, nil, nil, store.ErrExecutorNotFound)
 			},
 			wantErrContains: "executor not found",
 		},
@@ -715,7 +715,7 @@ func TestGetExecutorState(t *testing.T) {
 			request: &types.GetExecutorStateRequest{Namespace: _testNamespaceFixed, ExecutorID: "executor1"},
 			setupMocks: func(m *store.MockStore) {
 				m.EXPECT().GetHeartbeat(gomock.Any(), _testNamespaceFixed, "executor1").
-					Return(nil, nil, errors.New("etcd is down"))
+					Return(nil, nil, nil, errors.New("etcd is down"))
 			},
 			wantErrContains: "failed to get executor state",
 		},
@@ -761,6 +761,7 @@ func TestGetExecutorState_success(t *testing.T) {
 			ModRevision: 42,
 		},
 		nil,
+		nil,
 	)
 
 	h := newTestHandler(t, cfg, mockStorage)
@@ -802,6 +803,7 @@ func TestGetExecutorState_noAssignedState(t *testing.T) {
 			Status:        types.ExecutorStatusDRAINING,
 			LastHeartbeat: now,
 		},
+		nil,
 		nil,
 		nil,
 	)

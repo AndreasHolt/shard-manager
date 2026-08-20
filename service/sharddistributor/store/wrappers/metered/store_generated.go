@@ -120,9 +120,9 @@ func (c *meteredStore) GetExecutor(ctx context.Context, namespace string, execut
 	return
 }
 
-func (c *meteredStore) GetHeartbeat(ctx context.Context, namespace string, executorID string) (hp1 *store.HeartbeatState, ap1 *store.AssignedState, err error) {
+func (c *meteredStore) GetHeartbeat(ctx context.Context, namespace string, executorID string) (hp1 *store.HeartbeatState, ap1 *store.AssignedState, m1 map[string]store.ShardStatistics, err error) {
 	op := func() error {
-		hp1, ap1, err = c.wrapped.GetHeartbeat(ctx, namespace, executorID)
+		hp1, ap1, m1, err = c.wrapped.GetHeartbeat(ctx, namespace, executorID)
 		return err
 	}
 
@@ -160,9 +160,9 @@ func (c *meteredStore) RecordHeartbeat(ctx context.Context, namespace string, ex
 	return
 }
 
-func (c *meteredStore) RecordShardStatistics(ctx context.Context, namespace string, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *store.AssignedState) (err error) {
+func (c *meteredStore) RecordShardStatistics(ctx context.Context, namespace string, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *store.AssignedState, previousStats map[string]store.ShardStatistics) (err error) {
 	op := func() error {
-		err = c.wrapped.RecordShardStatistics(ctx, namespace, executorID, reportedShards, assignedState)
+		err = c.wrapped.RecordShardStatistics(ctx, namespace, executorID, reportedShards, assignedState, previousStats)
 		return err
 	}
 

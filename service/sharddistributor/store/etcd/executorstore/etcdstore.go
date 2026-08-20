@@ -157,14 +157,16 @@ func (s *executorStoreImpl) RecordHeartbeat(ctx context.Context, namespace, exec
 }
 
 // RecordShardStatistics updates greedy load statistics using the assignment
-// snapshot returned by GetHeartbeat. A stale snapshot causes the update to be
-// dropped rather than written against a newer assignment.
+// and statistics snapshots returned by GetHeartbeat. A stale assignment
+// snapshot causes the update to be dropped rather than written against a newer
+// assignment.
 func (s *executorStoreImpl) RecordShardStatistics(
 	ctx context.Context,
 	namespace string,
 	executorID string,
 	reported map[string]*types.ShardStatusReport,
 	assignedState *store.AssignedState,
+	previousStats map[string]store.ShardStatistics,
 ) error {
 	if s.cfg.GetLoadBalancingMode(namespace) != types.LoadBalancingModeGREEDY || assignedState == nil || len(reported) == 0 {
 		return nil
@@ -190,13 +192,9 @@ func (s *executorStoreImpl) RecordShardStatistics(
 		return nil
 	}
 
-	oldStats, err := s.shardCache.GetExecutorStatistics(ctx, namespace, executorID)
-	if err != nil {
-		if errors.Is(err, store.ErrExecutorNotFound) {
-			oldStats = make(map[string]etcdtypes.ShardStatistics)
-		} else {
-			return fmt.Errorf("get shard statistics for executor %s: %w", executorID, err)
-		}
+	oldStats := make(map[string]etcdtypes.ShardStatistics, len(previousStats))
+	for shardID, stats := range previousStats {
+		oldStats[shardID] = *etcdtypes.FromShardStatistics(&stats)
 	}
 
 	// The stats key stores one map per executor, and this write replaces it.
@@ -292,27 +290,28 @@ func (s *executorStoreImpl) loadSmoothingTimeConstant(namespace string) time.Dur
 	return s.cfg.LoadBalancingGreedy.LoadSmoothingTimeConstant(namespace)
 }
 
-// GetHeartbeat retrieves the last known heartbeat state for a single executor.
-func (s *executorStoreImpl) GetHeartbeat(ctx context.Context, namespace string, executorID string) (*store.HeartbeatState, *store.AssignedState, error) {
+// GetHeartbeat retrieves the heartbeat, assignment, and statistics snapshots
+// for a single executor.
+func (s *executorStoreImpl) GetHeartbeat(ctx context.Context, namespace string, executorID string) (*store.HeartbeatState, *store.AssignedState, map[string]store.ShardStatistics, error) {
 	// The prefix for all keys related to a single executor.
 	executorIDPrefix := etcdkeys.BuildExecutorIDPrefix(s.prefix, namespace, executorID)
 	resp, err := s.client.Get(ctx, executorIDPrefix, clientv3.WithPrefix())
 	if err != nil {
-		return nil, nil, fmt.Errorf("etcd get failed for executor %s: %w", executorID, err)
+		return nil, nil, nil, fmt.Errorf("etcd get failed for executor %s: %w", executorID, err)
 	}
 
 	if resp.Count == 0 {
-		return nil, nil, store.ErrExecutorNotFound
+		return nil, nil, nil, store.ErrExecutorNotFound
 	}
 
 	parsedData, err := common.ParseExecutorKVs(s.prefix, namespace, resp.Kvs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	executorData, ok := parsedData[executorID]
 	if !ok {
-		return nil, nil, store.ErrExecutorNotFound
+		return nil, nil, nil, store.ErrExecutorNotFound
 	}
 
 	heartbeatState := &store.HeartbeatState{
@@ -327,7 +326,12 @@ func (s *executorStoreImpl) GetHeartbeat(ctx context.Context, namespace string, 
 		assignedState = executorData.AssignedState.ToAssignedState()
 	}
 
-	return heartbeatState, assignedState, nil
+	statistics := make(map[string]store.ShardStatistics, len(executorData.Statistics))
+	for shardID, stats := range executorData.Statistics {
+		statistics[shardID] = *stats.ToShardStatistics()
+	}
+
+	return heartbeatState, assignedState, statistics, nil
 }
 
 // --- ShardStore Implementation ---

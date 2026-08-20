@@ -46,7 +46,7 @@ func NewExecutorHandler(
 }
 
 func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbeatRequest) (*types.ExecutorHeartbeatResponse, error) {
-	previousHeartbeat, assignedShards, err := h.storage.GetHeartbeat(ctx, request.Namespace, request.ExecutorID)
+	previousHeartbeat, assignedShards, previousStats, err := h.storage.GetHeartbeat(ctx, request.Namespace, request.ExecutorID)
 	// We ignore Executor not found errors, since it just means that this executor heartbeat the first time.
 	if err != nil && !errors.Is(err, store.ErrExecutorNotFound) {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get heartbeat: %v", err)}
@@ -70,7 +70,7 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to record heartbeat: %v", err)}
 	}
 
-	err = h.storage.RecordShardStatistics(ctx, request.Namespace, request.ExecutorID, request.ShardStatusReports, assignedShards)
+	err = h.storage.RecordShardStatistics(ctx, request.Namespace, request.ExecutorID, request.ShardStatusReports, assignedShards, previousStats)
 	if err != nil {
 		h.logger.Error("failed to record shard statistics",
 			tag.Error(err),
