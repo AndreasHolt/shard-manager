@@ -910,6 +910,163 @@ func TestShardStatisticsPersistence(t *testing.T) {
 	require.Contains(t, nsState.ShardAssignments[executorID].AssignedShards, shardID)
 }
 
+func TestPrepareShardStatisticsUpdatesUsesAssignmentSnapshot(t *testing.T) {
+	now := time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC)
+	executorStore := &executorStoreImpl{timeSource: clock.NewMockedTimeSourceAt(now)}
+
+	previousStats := map[string]store.ShardStatistics{
+		"move": {
+			SmoothedLoad:   12.5,
+			LastUpdateTime: now.Add(-time.Minute),
+			LastMoveTime:   now.Add(-time.Hour),
+		},
+		"stay-source": {
+			SmoothedLoad:   3,
+			LastUpdateTime: now.Add(-time.Minute),
+		},
+		"stay-destination": {
+			SmoothedLoad:   7,
+			LastUpdateTime: now.Add(-time.Minute),
+		},
+	}
+
+	updates := executorStore.prepareShardStatisticsUpdates(store.TransferShardStatisticsRequest{
+		PreviousShardOwners: map[string]string{
+			"move":             "source",
+			"stay-source":      "source",
+			"stay-destination": "destination",
+		},
+		NewAssignments: map[string]store.AssignedState{
+			"source": {
+				AssignedShards: map[string]*types.ShardAssignment{
+					"stay-source": {Status: types.AssignmentStatusREADY},
+				},
+			},
+			"destination": {
+				AssignedShards: map[string]*types.ShardAssignment{
+					"move":             {Status: types.AssignmentStatusREADY},
+					"stay-destination": {Status: types.AssignmentStatusREADY},
+					"new":              {Status: types.AssignmentStatusREADY},
+				},
+			},
+		},
+		PreviousShardStats: previousStats,
+	})
+
+	updatesByExecutor := make(map[string]map[string]etcdtypes.ShardStatistics, len(updates))
+	for _, update := range updates {
+		updatesByExecutor[update.executorID] = update.stats
+	}
+
+	require.Len(t, updatesByExecutor, 2)
+	staySource := previousStats["stay-source"]
+	assert.Equal(t, map[string]etcdtypes.ShardStatistics{
+		"stay-source": *etcdtypes.FromShardStatistics(&staySource),
+	}, updatesByExecutor["source"])
+
+	destinationStats := updatesByExecutor["destination"]
+	require.Len(t, destinationStats, 3)
+	stayDestination := previousStats["stay-destination"]
+	assert.Equal(t, *etcdtypes.FromShardStatistics(&stayDestination), destinationStats["stay-destination"])
+	assert.Equal(t, etcdtypes.ShardStatistics{}, destinationStats["new"])
+	moved := destinationStats["move"]
+	assert.Equal(t, previousStats["move"].SmoothedLoad, moved.SmoothedLoad)
+	assert.Equal(t, previousStats["move"].LastUpdateTime, moved.LastUpdateTime.ToTime())
+	assert.Equal(t, now, moved.LastMoveTime.ToTime())
+}
+
+func TestTransferShardStatistics(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	setLoadBalancingMode(executorStore, config.LoadBalancingModeGREEDY)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const (
+		source      = "transfer-source"
+		destination = "transfer-destination"
+		movedShard  = "transfer-moved"
+		sourceShard = "transfer-source-stay"
+		destShard   = "transfer-destination-stay"
+	)
+
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, source, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, destination, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	require.NoError(t, executorStore.AssignShards(ctx, tc.Namespace, store.AssignShardsRequest{
+		NewState: &store.NamespaceState{ShardAssignments: map[string]store.AssignedState{
+			source: {
+				AssignedShards: map[string]*types.ShardAssignment{
+					movedShard:  {Status: types.AssignmentStatusREADY},
+					sourceShard: {Status: types.AssignmentStatusREADY},
+				},
+			},
+			destination: {
+				AssignedShards: map[string]*types.ShardAssignment{
+					destShard: {Status: types.AssignmentStatusREADY},
+				},
+			},
+		}},
+	}, store.NopGuard()))
+
+	_, sourceAssigned, sourceStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, source)
+	require.NoError(t, err)
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, source, map[string]*types.ShardStatusReport{
+		movedShard:  {ShardLoad: 12.5},
+		sourceShard: {ShardLoad: 3},
+	}, sourceAssigned, sourceStats))
+
+	_, destinationAssigned, destinationStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, destination)
+	require.NoError(t, err)
+	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, destination, map[string]*types.ShardStatusReport{
+		destShard: {ShardLoad: 7},
+	}, destinationAssigned, destinationStats))
+
+	before, err := executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+	previousOwners := before.ShardOwners()
+	previousMovedStats := before.ShardStats[movedShard]
+
+	sourceState := before.ShardAssignments[source]
+	delete(sourceState.AssignedShards, movedShard)
+	destinationState := before.ShardAssignments[destination]
+	destinationState.AssignedShards[movedShard] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
+	newAssignments := map[string]store.AssignedState{
+		source:      sourceState,
+		destination: destinationState,
+	}
+
+	require.NoError(t, executorStore.AssignShards(ctx, tc.Namespace, store.AssignShardsRequest{
+		NewState:         &store.NamespaceState{ShardAssignments: newAssignments},
+		ChangedExecutors: map[string]struct{}{source: {}, destination: {}},
+	}, store.NopGuard()))
+
+	impl := executorStore.(*executorStoreImpl)
+	impl.timeSource.(clock.MockedTimeSource).Advance(time.Minute)
+	transferTime := impl.timeSource.Now().UTC()
+	require.NoError(t, executorStore.TransferShardStatistics(ctx, tc.Namespace, store.TransferShardStatisticsRequest{
+		PreviousShardOwners: previousOwners,
+		NewAssignments:      newAssignments,
+		PreviousShardStats:  before.ShardStats,
+	}))
+
+	after, err := executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+	movedStats := after.ShardStats[movedShard]
+	assert.Equal(t, previousMovedStats.SmoothedLoad, movedStats.SmoothedLoad)
+	assert.Equal(t, previousMovedStats.LastUpdateTime, movedStats.LastUpdateTime)
+	assert.Equal(t, transferTime, movedStats.LastMoveTime)
+	assert.Contains(t, after.ShardStats, sourceShard)
+	assert.Contains(t, after.ShardStats, destShard)
+
+	_, _, sourceStats, err = executorStore.GetHeartbeat(ctx, tc.Namespace, source)
+	require.NoError(t, err)
+	assert.NotContains(t, sourceStats, movedShard)
+	_, _, destinationStats, err = executorStore.GetHeartbeat(ctx, tc.Namespace, destination)
+	require.NoError(t, err)
+	assert.Contains(t, destinationStats, movedShard)
+}
+
 // TestGetShardStatisticsForMissingShard verifies GetState does not report statistics for unknown shards.
 func TestGetShardStatisticsForMissingShard(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)

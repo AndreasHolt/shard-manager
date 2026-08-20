@@ -301,6 +301,20 @@ func (mr *MockStoreMockRecorder) SubscribeToExecutorStatusChanges(ctx, namespace
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeToExecutorStatusChanges", reflect.TypeOf((*MockStore)(nil).SubscribeToExecutorStatusChanges), ctx, namespace)
 }
 
+// TransferShardStatistics mocks base method.
+func (m *MockStore) TransferShardStatistics(ctx context.Context, namespace string, request TransferShardStatisticsRequest) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TransferShardStatistics", ctx, namespace, request)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// TransferShardStatistics indicates an expected call of TransferShardStatistics.
+func (mr *MockStoreMockRecorder) TransferShardStatistics(ctx, namespace, request any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransferShardStatistics", reflect.TypeOf((*MockStore)(nil).TransferShardStatistics), ctx, namespace, request)
+}
+
 // UndrainShards mocks base method.
 func (m *MockStore) UndrainShards(ctx context.Context, namespace string, shardIDs []string) ([]string, error) {
 	m.ctrl.T.Helper()

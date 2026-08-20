@@ -610,6 +610,16 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 			return nil
 		},
 	)
+	statsErr := errors.New("statistics unavailable")
+	mocks.store.EXPECT().TransferShardStatistics(gomock.Any(), mocks.cfg.Name, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, request store.TransferShardStatisticsRequest) error {
+			assert.Len(t, request.PreviousShardOwners, 100)
+			assert.Len(t, request.NewAssignments["exec-1"].AssignedShards, 49)
+			assert.Len(t, request.NewAssignments["exec-2"].AssignedShards, 51)
+			assert.Equal(t, shardStats, request.PreviousShardStats)
+			return statsErr
+		},
+	)
 
 	err := processor.rebalanceShards(context.Background())
 	require.NoError(t, err)

@@ -200,6 +200,16 @@ func (c *meteredStore) SubscribeToExecutorStatusChanges(ctx context.Context, nam
 	return
 }
 
+func (c *meteredStore) TransferShardStatistics(ctx context.Context, namespace string, request store.TransferShardStatisticsRequest) (err error) {
+	op := func() error {
+		err = c.wrapped.TransferShardStatistics(ctx, namespace, request)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreTransferShardStatisticsScope, op, metrics.NamespaceTag(namespace))
+	return
+}
+
 func (c *meteredStore) UndrainShards(ctx context.Context, namespace string, shardIDs []string) (sa1 []string, err error) {
 	op := func() error {
 		sa1, err = c.wrapped.UndrainShards(ctx, namespace, shardIDs)

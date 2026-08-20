@@ -66,15 +66,30 @@ type AssignShardsRequest struct {
 	ChangedExecutors map[string]struct{}
 }
 
+// TransferShardStatisticsRequest contains the assignment snapshots needed to
+// carry shard statistics between executors after an assignment change.
+type TransferShardStatisticsRequest struct {
+	// PreviousShardOwners is the shard-to-executor view before the assignment change.
+	PreviousShardOwners map[string]string
+	// NewAssignments is the successfully committed assignment state.
+	NewAssignments map[string]AssignedState
+	// PreviousShardStats is the flattened statistics snapshot from before the assignment change.
+	PreviousShardStats map[string]ShardStatistics
+}
+
 type Store interface {
 	// GetState retrieves the current state of a namespace, including executors,
 	// shard statistics, and shard assignments.
 	GetState(ctx context.Context, namespace string) (*NamespaceState, error)
 
-	// AssignShards assigns multiple shards to executors within a namespace.
-	// It also updates shard statistics and deletes specified executors
+	// AssignShards assigns multiple shards to executors within a namespace and
+	// deletes specified executors.
 	// The operation is atomic and guarded by the provided GuardFunc.
 	AssignShards(ctx context.Context, namespace string, request AssignShardsRequest, guard GuardFunc) error
+
+	// TransferShardStatistics carries best-effort shard statistics between
+	// executors after an assignment change.
+	TransferShardStatistics(ctx context.Context, namespace string, request TransferShardStatisticsRequest) error
 
 	// AssignShard assigns a single shard to an executor within a namespace.
 	AssignShard(ctx context.Context, namespace string, shardID string, executorID string) error

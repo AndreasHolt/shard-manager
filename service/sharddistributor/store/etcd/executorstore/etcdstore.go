@@ -50,8 +50,8 @@ type executorStoreImpl struct {
 	metricsClient metrics.Client
 }
 
-// shardStatisticsUpdate holds the staged statistics for a shard so we can write them
-// to etcd after the main AssignShards transaction commits.
+// shardStatisticsUpdate holds one executor's complete statistics map after an
+// assignment change.
 type shardStatisticsUpdate struct {
 	executorID string
 	stats      map[string]etcdtypes.ShardStatistics
@@ -494,26 +494,6 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 	var opsElse []clientv3.Op
 	var comparisons []clientv3.Cmp
 	comparisonMaps := make(map[string]int64)
-
-	// TODO: Should be extracted to a higher level so that statistics updates are prepared
-	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
-		statsUpdates, errUpdate := s.prepareShardStatisticsUpdates(ctx, namespace, request.NewState.ShardAssignments)
-		if errUpdate != nil {
-			return fmt.Errorf("prepare shard statistics: %w", errUpdate)
-		}
-
-		defer func() {
-			// Apply the shard statistics updates after the main transaction commits.
-			// Only apply if there was no error in the main transaction.
-			if err != nil {
-				return
-			}
-			if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
-				s.logger.Error("failed to apply shard statistics updates", tag.Error(updateErr))
-				err = updateErr
-			}
-		}()
-	}
 
 	// 1. Prepare operations to delete stale executors and add comparisons to ensure they haven't been modified
 	for executorID, expectedModRevision := range request.ExecutorsToDelete {
@@ -1031,85 +1011,64 @@ func (s *executorStoreImpl) GetDrainedShards(ctx context.Context, namespace stri
 	return slices.Sorted(maps.Keys(drained)), nil
 }
 
-// prepareShardStatisticsUpdates calculates the necessary changes to shard statistics based on a new shard assignment plan.
-// It determines which shards have moved between executors, which are new, and prepares a list of updates
-// that remove a moved shard's stats from its old owner and add them to its new owner, recording the time of the move.
-func (s *executorStoreImpl) prepareShardStatisticsUpdates(ctx context.Context, namespace string, newAssignments map[string]store.AssignedState) ([]shardStatisticsUpdate, error) {
-	// statsUpdatesByExecutor contains per-executor stats maps that will be written back.
-	statsUpdatesByExecutor := make(map[string]map[string]etcdtypes.ShardStatistics)
+// TransferShardStatistics carries shard statistics between executors after a
+// successful assignment change. The request contains the state snapshot used
+// to plan that assignment, so this path does not consult the ownership cache.
+func (s *executorStoreImpl) TransferShardStatistics(ctx context.Context, namespace string, request store.TransferShardStatisticsRequest) error {
+	updates := s.prepareShardStatisticsUpdates(request)
+	if err := s.applyShardStatisticsUpdates(ctx, namespace, updates); err != nil {
+		return fmt.Errorf("transfer shard statistics: %w", err)
+	}
+	return nil
+}
 
-	for newOwnerID, state := range newAssignments {
+// prepareShardStatisticsUpdates calculates the per-executor statistics maps
+// that changed because shards moved or were assigned for the first time.
+func (s *executorStoreImpl) prepareShardStatisticsUpdates(request store.TransferShardStatisticsRequest) []shardStatisticsUpdate {
+	affectedExecutors := make(map[string]struct{})
+	updatedStatsByShard := make(map[string]etcdtypes.ShardStatistics)
+	now := s.timeSource.Now().UTC()
+
+	for newOwnerID, state := range request.NewAssignments {
 		for shardID := range state.AssignedShards {
-			now := s.timeSource.Now().UTC()
-
-			oldOwner, err := s.shardCache.GetShardOwner(ctx, namespace, shardID)
-			if err != nil {
-				if errors.Is(err, store.ErrShardNotFound) {
-					oldOwner = nil
-				} else {
-					return nil, fmt.Errorf("lookup cached shard owner: %w", err)
-				}
-			}
-			if oldOwner != nil && oldOwner.ExecutorID == newOwnerID {
-				// Already owned by the target, nothing to move.
+			oldOwnerID, previouslyAssigned := request.PreviousShardOwners[shardID]
+			if previouslyAssigned && oldOwnerID == newOwnerID {
 				continue
 			}
 
-			// Leave stats at zero value: unmeasured until the first heartbeat sets
-			// LastUpdateTime, and not on move cooldown until reassigned from a prior owner.
-			var newStatForShard etcdtypes.ShardStatistics
-
-			if oldOwner != nil {
-				previousStats, ok := statsUpdatesByExecutor[oldOwner.ExecutorID]
-				if !ok {
-					previousStats, err = s.loadStatsForUpdate(ctx, namespace, oldOwner.ExecutorID)
-					if err != nil {
-						return nil, err
-					}
-					statsUpdatesByExecutor[oldOwner.ExecutorID] = previousStats
-				}
-				if previousStatForShard, ok := previousStats[shardID]; ok {
-					// Carry over the accumulated load and update the move time.
-					newStatForShard = previousStatForShard
-					newStatForShard.LastMoveTime = etcdtypes.Time(now)
-					delete(previousStats, shardID)
-				}
+			affectedExecutors[newOwnerID] = struct{}{}
+			if previouslyAssigned {
+				affectedExecutors[oldOwnerID] = struct{}{}
 			}
 
-			newOwnerStats, ok := statsUpdatesByExecutor[newOwnerID]
-			if !ok {
-				newOwnerStats, err = s.loadStatsForUpdate(ctx, namespace, newOwnerID)
-				if err != nil {
-					return nil, err
-				}
-				statsUpdatesByExecutor[newOwnerID] = newOwnerStats
+			// First assignments remain unmeasured. When a measured shard moves,
+			// carry its load history and start its move cooldown.
+			var updatedStats etcdtypes.ShardStatistics
+			if previousStats, ok := request.PreviousShardStats[shardID]; previouslyAssigned && ok {
+				updatedStats = *etcdtypes.FromShardStatistics(&previousStats)
+				updatedStats.LastMoveTime = etcdtypes.Time(now)
 			}
-			newOwnerStats[shardID] = newStatForShard
+			updatedStatsByShard[shardID] = updatedStats
 		}
 	}
 
-	shardStatisticsUpdates := make([]shardStatisticsUpdate, 0, len(statsUpdatesByExecutor))
-	for executorID, stats := range statsUpdatesByExecutor {
-		shardStatisticsUpdates = append(shardStatisticsUpdates, shardStatisticsUpdate{
-			executorID: executorID,
-			stats:      stats,
-		})
-	}
-	return shardStatisticsUpdates, nil
-}
-
-// loadStatsForUpdate loads the current stats for executorID, or returns an empty map
-// when no stats have been recorded for that executor yet.
-func (s *executorStoreImpl) loadStatsForUpdate(ctx context.Context, namespace, executorID string) (map[string]etcdtypes.ShardStatistics, error) {
-	stats, err := s.shardCache.GetExecutorStatistics(ctx, namespace, executorID)
-	if err != nil {
-		if !errors.Is(err, store.ErrExecutorNotFound) {
-			return nil, fmt.Errorf("get shard statistics for executor %s: %w", executorID, err)
+	updates := make([]shardStatisticsUpdate, 0, len(affectedExecutors))
+	for executorID := range affectedExecutors {
+		assigned := request.NewAssignments[executorID]
+		stats := make(map[string]etcdtypes.ShardStatistics, len(assigned.AssignedShards))
+		for shardID := range assigned.AssignedShards {
+			if updatedStats, ok := updatedStatsByShard[shardID]; ok {
+				stats[shardID] = updatedStats
+				continue
+			}
+			if previousStats, ok := request.PreviousShardStats[shardID]; ok {
+				stats[shardID] = *etcdtypes.FromShardStatistics(&previousStats)
+			}
 		}
-		stats = make(map[string]etcdtypes.ShardStatistics)
+		updates = append(updates, shardStatisticsUpdate{executorID: executorID, stats: stats})
 	}
 
-	return stats, nil
+	return updates
 }
 
 // applyShardStatisticsUpdates updates shard statistics.

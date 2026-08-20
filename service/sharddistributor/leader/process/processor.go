@@ -475,6 +475,11 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return nil
 	}
 
+	var previousShardOwners map[string]string
+	if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY {
+		previousShardOwners = namespaceState.ShardOwners()
+	}
+
 	newState, changedExecutors := p.getNewAssignmentsState(namespaceState, currentAssignments)
 
 	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
@@ -490,6 +495,17 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	}, p.election.Guard())
 	if err != nil {
 		return fmt.Errorf("assign shards: %w", err)
+	}
+
+	if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY {
+		statsErr := p.shardStore.TransferShardStatistics(ctx, p.namespaceCfg.Name, store.TransferShardStatisticsRequest{
+			PreviousShardOwners: previousShardOwners,
+			NewAssignments:      newState,
+			PreviousShardStats:  namespaceState.ShardStats,
+		})
+		if statsErr != nil {
+			p.logger.Error("failed to transfer shard statistics", tag.Error(statsErr))
+		}
 	}
 
 	p.emitActiveShardMetric(namespaceState.ShardAssignments, metricsLoopScope)
