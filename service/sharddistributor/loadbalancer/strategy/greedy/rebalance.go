@@ -16,7 +16,6 @@ import (
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
-// minShardSmoothedLoadForMove prevents low matching QPS from consuming the move budget.
 const minShardSmoothedLoadForMove = 0.01
 
 type moveCandidate struct {
