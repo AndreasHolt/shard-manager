@@ -13,8 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
-	types "github.com/cadence-workflow/shard-manager/common/types"
 	gomock "go.uber.org/mock/gomock"
+
+	types "github.com/cadence-workflow/shard-manager/common/types"
 )
 
 // MockTxn is a mock of Txn interface.
