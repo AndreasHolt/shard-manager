@@ -10,6 +10,7 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/log"
 	"github.com/cadence-workflow/shard-manager/common/metrics"
+	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
@@ -156,6 +157,16 @@ func (c *meteredStore) RecordHeartbeat(ctx context.Context, namespace string, ex
 	}
 
 	err = c.call(metrics.ShardDistributorStoreRecordHeartbeatScope, op, metrics.NamespaceTag(namespace))
+	return
+}
+
+func (c *meteredStore) RecordShardStatistics(ctx context.Context, namespace string, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *store.AssignedState) (err error) {
+	op := func() error {
+		err = c.wrapped.RecordShardStatistics(ctx, namespace, executorID, reportedShards, assignedState)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreRecordShardStatisticsScope, op, metrics.NamespaceTag(namespace))
 	return
 }
 

@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	types "github.com/cadence-workflow/shard-manager/common/types"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -236,6 +237,20 @@ func (m *MockStore) RecordHeartbeat(ctx context.Context, namespace, executorID s
 func (mr *MockStoreMockRecorder) RecordHeartbeat(ctx, namespace, executorID, state any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordHeartbeat", reflect.TypeOf((*MockStore)(nil).RecordHeartbeat), ctx, namespace, executorID, state)
+}
+
+// RecordShardStatistics mocks base method.
+func (m *MockStore) RecordShardStatistics(ctx context.Context, namespace, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *AssignedState) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordShardStatistics", ctx, namespace, executorID, reportedShards, assignedState)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordShardStatistics indicates an expected call of RecordShardStatistics.
+func (mr *MockStoreMockRecorder) RecordShardStatistics(ctx, namespace, executorID, reportedShards, assignedState any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordShardStatistics", reflect.TypeOf((*MockStore)(nil).RecordShardStatistics), ctx, namespace, executorID, reportedShards, assignedState)
 }
 
 // ResetNamespace mocks base method.

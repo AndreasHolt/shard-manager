@@ -153,38 +153,26 @@ func (s *executorStoreImpl) RecordHeartbeat(ctx context.Context, namespace, exec
 	if err != nil {
 		return fmt.Errorf("record heartbeat: %w", err)
 	}
-	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
-		statsUpdates, err := s.calcUpdatedStatistics(ctx, namespace, executorID, request.ReportedShards)
-		if err != nil {
-			return fmt.Errorf("calculate shard statistics updates: %w", err)
-		}
-		if err := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); err != nil {
-			return fmt.Errorf("apply shard statistics updates: %w", err)
-		}
-	}
-
 	return nil
 }
 
-func (s *executorStoreImpl) calcUpdatedStatistics(ctx context.Context, namespace, executorID string, reported map[string]*types.ShardStatusReport) ([]shardStatisticsUpdate, error) {
-	if len(reported) == 0 {
-		return nil, nil
+// RecordShardStatistics updates greedy load statistics using the assignment
+// snapshot returned by GetHeartbeat. A stale snapshot causes the update to be
+// dropped rather than written against a newer assignment.
+func (s *executorStoreImpl) RecordShardStatistics(
+	ctx context.Context,
+	namespace string,
+	executorID string,
+	reported map[string]*types.ShardStatusReport,
+	assignedState *store.AssignedState,
+) error {
+	if s.cfg.GetLoadBalancingMode(namespace) != types.LoadBalancingModeGREEDY || assignedState == nil || len(reported) == 0 {
+		return nil
 	}
 
-	var statsUpdate shardStatisticsUpdate
-	statsUpdate.executorID = executorID
-	statsUpdate.stats = make(map[string]etcdtypes.ShardStatistics)
-
-	oldStats, err := s.shardCache.GetExecutorStatistics(ctx, namespace, executorID)
-	if err != nil {
-		if errors.Is(err, store.ErrExecutorNotFound) {
-			oldStats = make(map[string]etcdtypes.ShardStatistics)
-		} else {
-			return nil, fmt.Errorf("get shard statistics for executor %s: %w", executorID, err)
-		}
-	}
-
-	now := s.timeSource.Now().UTC()
+	eligibleReports := make(map[string]*types.ShardStatusReport)
+	// An executor may report a shard until an assignment response tells it to stop.
+	// Ignore reports for shards outside this assignment snapshot and keep only eligible reports.
 	for shardID, report := range reported {
 		if report == nil {
 			s.logger.Warn("empty report; skipping smoothed load update",
@@ -194,22 +182,75 @@ func (s *executorStoreImpl) calcUpdatedStatistics(ctx context.Context, namespace
 			)
 			continue
 		}
-
-		shardOwner, err := s.shardCache.GetShardOwner(ctx, namespace, shardID)
-		if err != nil {
-			if errors.Is(err, store.ErrShardNotFound) {
-				continue
-			}
-			return nil, fmt.Errorf("lookup shard owner: %w", err)
+		if _, assigned := assignedState.AssignedShards[shardID]; assigned {
+			eligibleReports[shardID] = report
 		}
-		if shardOwner.ExecutorID != executorID {
-			continue
-		}
-
-		statsUpdate.stats[shardID] = s.updateShardStatistic(namespace, executorID, shardID, report.ShardLoad, now, oldStats)
+	}
+	if len(eligibleReports) == 0 {
+		return nil
 	}
 
-	return []shardStatisticsUpdate{statsUpdate}, nil
+	oldStats, err := s.shardCache.GetExecutorStatistics(ctx, namespace, executorID)
+	if err != nil {
+		if errors.Is(err, store.ErrExecutorNotFound) {
+			oldStats = make(map[string]etcdtypes.ShardStatistics)
+		} else {
+			return fmt.Errorf("get shard statistics for executor %s: %w", executorID, err)
+		}
+	}
+
+	// The stats key stores one map per executor, and this write replaces it.
+	// Preserve existing stats for shards still assigned to this executor.
+	// Assignment updates transfer stats for moved shards to their new owner.
+	updatedStats := make(map[string]etcdtypes.ShardStatistics, len(assignedState.AssignedShards))
+	for shardID := range assignedState.AssignedShards {
+		if stats, ok := oldStats[shardID]; ok {
+			updatedStats[shardID] = stats
+		}
+	}
+
+	now := s.timeSource.Now().UTC()
+	for shardID, report := range eligibleReports {
+		updatedStats[shardID] = s.updateShardStatistic(namespace, executorID, shardID, report.ShardLoad, now, oldStats)
+	}
+
+	if err := s.applyHeartbeatShardStatisticsUpdate(ctx, namespace, executorID, assignedState.ModRevision, updatedStats); err != nil {
+		return fmt.Errorf("apply shard statistics update: %w", err)
+	}
+	return nil
+}
+
+func (s *executorStoreImpl) applyHeartbeatShardStatisticsUpdate(
+	ctx context.Context,
+	namespace string,
+	executorID string,
+	assignedStateModRevision int64,
+	stats map[string]etcdtypes.ShardStatistics,
+) error {
+	payload, err := json.Marshal(stats)
+	if err != nil {
+		return fmt.Errorf("marshal executor shard statistics: %w", err)
+	}
+	compressedPayload, err := s.recordWriter.Write(payload)
+	if err != nil {
+		return fmt.Errorf("compress executor shard statistics: %w", err)
+	}
+
+	assignedStateKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorAssignedStateKey)
+	statsKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorShardStatisticsKey)
+	txnResp, err := s.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.ModRevision(assignedStateKey), "=", assignedStateModRevision)).
+		Then(clientv3.OpPut(statsKey, string(compressedPayload))).
+		Commit()
+	if err != nil {
+		return fmt.Errorf("put executor shard statistics: %w", err)
+	}
+	if !txnResp.Succeeded {
+		// The assignment changed after the heartbeat snapshot was read. Statistics
+		// are best effort, so discard this stale sample without retrying.
+		return nil
+	}
+	return nil
 }
 
 func (s *executorStoreImpl) updateShardStatistic(namespace, executorID, shardID string, shardLoad float64, now time.Time, oldStats map[string]etcdtypes.ShardStatistics) etcdtypes.ShardStatistics {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/log"
+	"github.com/cadence-workflow/shard-manager/common/log/tag"
 	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
@@ -67,6 +68,15 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 	err = h.storage.RecordHeartbeat(ctx, request.Namespace, request.ExecutorID, newHeartbeat)
 	if err != nil {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to record heartbeat: %v", err)}
+	}
+
+	err = h.storage.RecordShardStatistics(ctx, request.Namespace, request.ExecutorID, request.ShardStatusReports, assignedShards)
+	if err != nil {
+		h.logger.Error("failed to record shard statistics",
+			tag.Error(err),
+			tag.ShardNamespace(request.Namespace),
+			tag.ShardExecutor(request.ExecutorID),
+		)
 	}
 
 	// emit shard assignment metrics only if shards are assigned in the background

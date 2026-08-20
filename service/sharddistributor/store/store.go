@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+
+	"github.com/cadence-workflow/shard-manager/common/types"
 )
 
 //go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination=store_mock.go Store
@@ -94,6 +96,7 @@ type Store interface {
 
 	GetHeartbeat(ctx context.Context, namespace string, executorID string) (*HeartbeatState, *AssignedState, error)
 	RecordHeartbeat(ctx context.Context, namespace, executorID string, state HeartbeatState) error
+	RecordShardStatistics(ctx context.Context, namespace, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *AssignedState) error
 
 	DeleteShardStats(ctx context.Context, namespace string, shardIDs []string, guard GuardFunc) error
 

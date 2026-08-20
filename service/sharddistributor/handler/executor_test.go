@@ -44,6 +44,7 @@ func TestHeartbeat(t *testing.T) {
 			LastHeartbeat: now,
 			Status:        types.ExecutorStatusACTIVE,
 		})
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, nil)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -57,10 +58,14 @@ func TestHeartbeat(t *testing.T) {
 		shardDistributionCfg := config.ShardDistribution{}
 		handler := NewExecutorHandler(testlogger.New(t), mockStore, mockTimeSource, shardDistributionCfg, metrics.NoopClient)
 
+		reports := map[string]*types.ShardStatusReport{
+			"shard-1": {Status: types.ShardStatusREADY, ShardLoad: 12.3},
+		}
 		req := &types.ExecutorHeartbeatRequest{
-			Namespace:  namespace,
-			ExecutorID: executorID,
-			Status:     types.ExecutorStatusACTIVE,
+			Namespace:          namespace,
+			ExecutorID:         executorID,
+			Status:             types.ExecutorStatusACTIVE,
+			ShardStatusReports: reports,
 		}
 
 		previousHeartbeat := store.HeartbeatState{
@@ -68,11 +73,19 @@ func TestHeartbeat(t *testing.T) {
 			Status:        types.ExecutorStatusACTIVE,
 		}
 
-		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, nil, nil)
+		assignedState := &store.AssignedState{
+			AssignedShards: map[string]*types.ShardAssignment{
+				"shard-1": {Status: types.AssignmentStatusREADY},
+			},
+			ModRevision: 42,
+		}
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, assignedState, nil)
 		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, store.HeartbeatState{
-			LastHeartbeat: now,
-			Status:        types.ExecutorStatusACTIVE,
+			LastHeartbeat:  now,
+			Status:         types.ExecutorStatusACTIVE,
+			ReportedShards: reports,
 		})
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, reports, assignedState)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -102,6 +115,7 @@ func TestHeartbeat(t *testing.T) {
 			LastHeartbeat: now,
 			Status:        types.ExecutorStatusDRAINING,
 		})
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, nil)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -127,6 +141,32 @@ func TestHeartbeat(t *testing.T) {
 		_, err := handler.Heartbeat(ctx, req)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), expectedErr.Error())
+	})
+
+	t.Run("StatisticsErrorDoesNotFailHeartbeat", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockStore := store.NewMockStore(ctrl)
+		mockTimeSource := clock.NewMockedTimeSourceAt(now)
+		handler := NewExecutorHandler(testlogger.New(t), mockStore, mockTimeSource, config.ShardDistribution{}, metrics.NoopClient)
+
+		req := &types.ExecutorHeartbeatRequest{
+			Namespace:  namespace,
+			ExecutorID: executorID,
+			Status:     types.ExecutorStatusACTIVE,
+		}
+		assignedState := &store.AssignedState{
+			AssignedShards: map[string]*types.ShardAssignment{
+				"shard-1": {Status: types.AssignmentStatusREADY},
+			},
+		}
+
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(nil, assignedState, nil)
+		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, gomock.Any()).Return(nil)
+		mockStore.EXPECT().RecordShardStatistics(gomock.Any(), namespace, executorID, nil, assignedState).Return(errors.New("statistics write failed"))
+
+		response, err := handler.Heartbeat(ctx, req)
+		require.NoError(t, err)
+		require.Equal(t, assignedState.AssignedShards, response.ShardAssignments)
 	})
 
 	// Test Case 9: Heartbeat with metadata validation failure - too many keys
