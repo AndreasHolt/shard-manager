@@ -1015,7 +1015,7 @@ func (s *executorStoreImpl) GetDrainedShards(ctx context.Context, namespace stri
 
 // TransferShardStatistics carries shard statistics between executors after a
 // successful assignment change. The request contains the state snapshot used
-// to plan that assignment, so this path does not consult the ownership cache.
+// to plan that assignment, so this path does not use the ownership cache.
 func (s *executorStoreImpl) TransferShardStatistics(ctx context.Context, namespace string, request store.TransferShardStatisticsRequest) error {
 	updates := s.prepareShardStatisticsUpdates(request)
 	if err := s.applyShardStatisticsUpdates(ctx, namespace, updates); err != nil {
@@ -1034,6 +1034,7 @@ func (s *executorStoreImpl) prepareShardStatisticsUpdates(request store.Transfer
 	for newOwnerID, state := range request.NewAssignments {
 		for shardID := range state.AssignedShards {
 			oldOwnerID, previouslyAssigned := request.PreviousShardOwners[shardID]
+			// Statistics stay where they are when the shard keeps the same owner.
 			if previouslyAssigned && oldOwnerID == newOwnerID {
 				continue
 			}
