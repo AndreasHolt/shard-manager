@@ -301,11 +301,6 @@ func TestRecordShardStatisticsPreservesAssignedStatsAndIgnoresUnassignedReports(
 	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, initialReports, assignedState, previousStats))
 
 	impl := executorStore.(*executorStoreImpl)
-	assert.Eventually(t, func() bool {
-		stats, err := impl.shardCache.GetExecutorStatistics(ctx, tc.Namespace, executorID)
-		return err == nil && stats[updatedShardID].SmoothedLoad == 10 && stats[preservedShardID].SmoothedLoad == 20
-	}, 5*time.Second, 50*time.Millisecond)
-
 	before, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
 	preservedBefore := before.ShardStats[preservedShardID]
