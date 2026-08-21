@@ -172,7 +172,7 @@ func (s *executorStoreImpl) RecordShardStatistics(
 		return nil
 	}
 
-	eligibleReports := make(map[string]*types.ShardStatusReport)
+	reportsEligibleForUpdate := make(map[string]*types.ShardStatusReport)
 	// An executor may report a shard until an assignment response tells it to stop.
 	// Ignore reports for shards outside this assignment snapshot and keep only eligible reports.
 	for shardID, report := range reported {
@@ -185,10 +185,10 @@ func (s *executorStoreImpl) RecordShardStatistics(
 			continue
 		}
 		if _, assigned := assignedState.AssignedShards[shardID]; assigned {
-			eligibleReports[shardID] = report
+			reportsEligibleForUpdate[shardID] = report
 		}
 	}
-	if len(eligibleReports) == 0 {
+	if len(reportsEligibleForUpdate) == 0 {
 		return nil
 	}
 
@@ -197,9 +197,11 @@ func (s *executorStoreImpl) RecordShardStatistics(
 		oldStats[shardID] = *etcdtypes.FromShardStatistics(&stats)
 	}
 
-	// The stats key stores one map per executor, and this write replaces it.
-	// Preserve existing stats for shards still assigned to this executor.
-	// Assignment updates transfer stats for moved shards to their new owner.
+	// The stats key stores one map per executor, so this write replaces the full map.
+	// Preserve existing stats for every shard in the assignment snapshot, even if
+	// the executor did not report it in this heartbeat. Omit stats for shards no
+	// longer assigned to this executor. Assignment handling carries moved stats
+	// to the new owner.
 	updatedStats := make(map[string]etcdtypes.ShardStatistics, len(assignedState.AssignedShards))
 	for shardID := range assignedState.AssignedShards {
 		if stats, ok := oldStats[shardID]; ok {
@@ -208,7 +210,7 @@ func (s *executorStoreImpl) RecordShardStatistics(
 	}
 
 	now := s.timeSource.Now().UTC()
-	for shardID, report := range eligibleReports {
+	for shardID, report := range reportsEligibleForUpdate {
 		updatedStats[shardID] = s.updateShardStatistic(namespace, executorID, shardID, report.ShardLoad, now, oldStats)
 	}
 
