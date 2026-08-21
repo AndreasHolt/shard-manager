@@ -475,8 +475,9 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return nil
 	}
 
+	isGreedyLoadBalancing := p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY
 	var previousShardOwners map[string]string
-	if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY {
+	if isGreedyLoadBalancing {
 		previousShardOwners = namespaceState.ShardOwners()
 	}
 
@@ -497,7 +498,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("assign shards: %w", err)
 	}
 
-	if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY {
+	if isGreedyLoadBalancing {
 		statsErr := p.shardStore.TransferShardStatistics(ctx, p.namespaceCfg.Name, store.TransferShardStatisticsRequest{
 			PreviousShardOwners: previousShardOwners,
 			NewAssignments:      newState,
