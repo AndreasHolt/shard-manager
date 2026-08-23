@@ -14,6 +14,13 @@ type HeartbeatState struct {
 	Metadata       map[string]string
 }
 
+// ExecutorState contains the persisted state for one executor.
+type ExecutorState struct {
+	Heartbeat  *HeartbeatState
+	Assignment *AssignedState
+	Statistics map[string]ShardStatistics
+}
+
 type AssignedState struct {
 	// AssignedShards holds the current assignment of shards to this executor
 	// Key: ShardID

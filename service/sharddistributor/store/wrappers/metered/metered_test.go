@@ -21,15 +21,17 @@ const (
 	_testExecutorID = "test_executorID"
 )
 
-func TestMeteredStore_GetHeartbeat(t *testing.T) {
-	heartbeatRes := &store.HeartbeatState{
-		LastHeartbeat: time.Now().UTC(),
-	}
-	assignedState := &store.AssignedState{
-		LastUpdated: time.Now().UTC(),
-	}
-	statistics := map[string]store.ShardStatistics{
-		"shard-1": {SmoothedLoad: 12.3},
+func TestMeteredStore_GetExecutorState(t *testing.T) {
+	executorState := store.ExecutorState{
+		Heartbeat: &store.HeartbeatState{
+			LastHeartbeat: time.Now().UTC(),
+		},
+		Assignment: &store.AssignedState{
+			LastUpdated: time.Now().UTC(),
+		},
+		Statistics: map[string]store.ShardStatistics{
+			"shard-1": {SmoothedLoad: 12.3},
+		},
 	}
 
 	tests := []struct {
@@ -59,29 +61,27 @@ func TestMeteredStore_GetHeartbeat(t *testing.T) {
 			timeSource := clock.NewMockedTimeSource()
 			mockHandler := store.NewMockStore(ctrl)
 
-			mockHandler.EXPECT().GetHeartbeat(gomock.Any(), _testNamespace, _testExecutorID).Do(func(ctx context.Context, namespace string, executorID string) {
+			mockHandler.EXPECT().GetExecutorState(gomock.Any(), _testNamespace, _testExecutorID).Do(func(ctx context.Context, namespace string, executorID string) {
 				timeSource.Advance(time.Second)
-			}).Return(heartbeatRes, assignedState, statistics, tt.error)
+			}).Return(executorState, tt.error)
 
 			mockLogger := log.NewMockLogger(ctrl)
 			mockLogger.EXPECT().Helper().Return(mockLogger).AnyTimes()
 
 			wrapped := NewStore(mockHandler, metricsClient, mockLogger, timeSource).(*meteredStore)
 
-			gotHeartbeat, gotAssignedState, gotStatistics, err := wrapped.GetHeartbeat(context.Background(), _testNamespace, _testExecutorID)
+			gotExecutorState, err := wrapped.GetExecutorState(context.Background(), _testNamespace, _testExecutorID)
 
-			assert.Equal(t, heartbeatRes, gotHeartbeat)
-			assert.Equal(t, assignedState, gotAssignedState)
-			assert.Equal(t, statistics, gotStatistics)
+			assert.Equal(t, executorState, gotExecutorState)
 			assert.Equal(t, tt.error, err)
 
 			// check that the metrics were emitted for this method
-			requestCounterName := "test.shard_distributor_store_requests_per_namespace+namespace=test_namespace,operation=StoreGetHeartbeat"
+			requestCounterName := "test.shard_distributor_store_requests_per_namespace+namespace=test_namespace,operation=StoreGetExecutorState"
 			assert.Contains(t, testScope.Snapshot().Counters(), requestCounterName)
 			requestCounter := testScope.Snapshot().Counters()[requestCounterName]
 			assert.Equal(t, int64(1), requestCounter.Value())
 
-			latencyHistogramName := "test.shard_distributor_store_latency_histogram_per_namespace+namespace=test_namespace,operation=StoreGetHeartbeat"
+			latencyHistogramName := "test.shard_distributor_store_latency_histogram_per_namespace+namespace=test_namespace,operation=StoreGetExecutorState"
 			allHistograms := testScope.Snapshot().Histograms()
 			assert.Contains(t, allHistograms, latencyHistogramName)
 		})

@@ -705,17 +705,17 @@ func TestGetExecutorState(t *testing.T) {
 			name:    "executor_not_found",
 			request: &types.GetExecutorStateRequest{Namespace: _testNamespaceFixed, ExecutorID: "executor1"},
 			setupMocks: func(m *store.MockStore) {
-				m.EXPECT().GetHeartbeat(gomock.Any(), _testNamespaceFixed, "executor1").
-					Return(nil, nil, nil, store.ErrExecutorNotFound)
+				m.EXPECT().GetExecutorState(gomock.Any(), _testNamespaceFixed, "executor1").
+					Return(store.ExecutorState{}, store.ErrExecutorNotFound)
 			},
 			wantErrContains: "executor not found",
 		},
 		{
-			name:    "get_heartbeat_error",
+			name:    "get_executor_state_error",
 			request: &types.GetExecutorStateRequest{Namespace: _testNamespaceFixed, ExecutorID: "executor1"},
 			setupMocks: func(m *store.MockStore) {
-				m.EXPECT().GetHeartbeat(gomock.Any(), _testNamespaceFixed, "executor1").
-					Return(nil, nil, nil, errors.New("etcd is down"))
+				m.EXPECT().GetExecutorState(gomock.Any(), _testNamespaceFixed, "executor1").
+					Return(store.ExecutorState{}, errors.New("etcd is down"))
 			},
 			wantErrContains: "failed to get executor state",
 		},
@@ -747,20 +747,21 @@ func TestGetExecutorState_success(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	mockStorage := store.NewMockStore(ctrl)
-	mockStorage.EXPECT().GetHeartbeat(gomock.Any(), _testNamespaceFixed, "executor1").Return(
-		&store.HeartbeatState{
-			Status:        types.ExecutorStatusACTIVE,
-			LastHeartbeat: now,
-			Metadata:      map[string]string{"ip": "127.0.0.1", "port": "1234"},
-		},
-		&store.AssignedState{
-			AssignedShards: map[string]*types.ShardAssignment{
-				"shard1": {Status: types.AssignmentStatusREADY},
-				"shard2": nil,
+	mockStorage.EXPECT().GetExecutorState(gomock.Any(), _testNamespaceFixed, "executor1").Return(
+		store.ExecutorState{
+			Heartbeat: &store.HeartbeatState{
+				Status:        types.ExecutorStatusACTIVE,
+				LastHeartbeat: now,
+				Metadata:      map[string]string{"ip": "127.0.0.1", "port": "1234"},
 			},
-			ModRevision: 42,
+			Assignment: &store.AssignedState{
+				AssignedShards: map[string]*types.ShardAssignment{
+					"shard1": {Status: types.AssignmentStatusREADY},
+					"shard2": nil,
+				},
+				ModRevision: 42,
+			},
 		},
-		nil,
 		nil,
 	)
 
@@ -798,13 +799,13 @@ func TestGetExecutorState_noAssignedState(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	mockStorage := store.NewMockStore(ctrl)
-	mockStorage.EXPECT().GetHeartbeat(gomock.Any(), _testNamespaceFixed, "executor1").Return(
-		&store.HeartbeatState{
-			Status:        types.ExecutorStatusDRAINING,
-			LastHeartbeat: now,
+	mockStorage.EXPECT().GetExecutorState(gomock.Any(), _testNamespaceFixed, "executor1").Return(
+		store.ExecutorState{
+			Heartbeat: &store.HeartbeatState{
+				Status:        types.ExecutorStatusDRAINING,
+				LastHeartbeat: now,
+			},
 		},
-		nil,
-		nil,
 		nil,
 	)
 

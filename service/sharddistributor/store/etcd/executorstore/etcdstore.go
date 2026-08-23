@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"time"
 
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -21,7 +20,6 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
-	"github.com/cadence-workflow/shard-manager/service/sharddistributor/statistics"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/etcdclient"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/etcdkeys"
@@ -156,78 +154,21 @@ func (s *executorStoreImpl) RecordHeartbeat(ctx context.Context, namespace, exec
 	return nil
 }
 
-// RecordShardStatistics updates greedy load statistics using the assignment
-// and statistics snapshots returned by GetHeartbeat. A stale assignment
-// snapshot causes the update to be dropped rather than written against a newer
-// assignment.
+// RecordShardStatistics persists prepared statistics if the executor's
+// assignment has not changed since it was read.
 func (s *executorStoreImpl) RecordShardStatistics(
 	ctx context.Context,
 	namespace string,
 	executorID string,
-	reported map[string]*types.ShardStatusReport,
-	assignedState *store.AssignedState,
-	previousStats map[string]store.ShardStatistics,
+	assignmentModRevision int64,
+	statistics map[string]store.ShardStatistics,
 ) error {
-	if s.cfg.GetLoadBalancingMode(namespace) != types.LoadBalancingModeGREEDY || assignedState == nil || len(reported) == 0 {
-		return nil
+	storedStatistics := make(map[string]etcdtypes.ShardStatistics, len(statistics))
+	for shardID, stats := range statistics {
+		storedStatistics[shardID] = *etcdtypes.FromShardStatistics(&stats)
 	}
 
-	reportsEligibleForUpdate := make(map[string]*types.ShardStatusReport)
-	// An executor may report a shard until an assignment response tells it to stop.
-	// Ignore reports for shards outside this assignment snapshot and keep only eligible reports.
-	for shardID, report := range reported {
-		if report == nil {
-			s.logger.Warn("empty report; skipping smoothed load update",
-				tag.ShardNamespace(namespace),
-				tag.ShardExecutor(executorID),
-				tag.ShardKey(shardID),
-			)
-			continue
-		}
-		if _, assigned := assignedState.AssignedShards[shardID]; assigned {
-			reportsEligibleForUpdate[shardID] = report
-		}
-	}
-	if len(reportsEligibleForUpdate) == 0 {
-		return nil
-	}
-
-	oldStats := make(map[string]etcdtypes.ShardStatistics, len(previousStats))
-	for shardID, stats := range previousStats {
-		oldStats[shardID] = *etcdtypes.FromShardStatistics(&stats)
-	}
-
-	// The stats key stores one map per executor, so this write replaces the full map.
-	// Preserve existing stats for every shard in the assignment snapshot, even if
-	// the executor did not report it in this heartbeat. Omit stats for shards no
-	// longer assigned to this executor. Assignment handling carries moved stats
-	// to the new owner.
-	updatedStats := make(map[string]etcdtypes.ShardStatistics, len(assignedState.AssignedShards))
-	for shardID := range assignedState.AssignedShards {
-		if stats, ok := oldStats[shardID]; ok {
-			updatedStats[shardID] = stats
-		}
-	}
-
-	now := s.timeSource.Now().UTC()
-	for shardID, report := range reportsEligibleForUpdate {
-		updatedStats[shardID] = s.updateShardStatistic(namespace, executorID, shardID, report.ShardLoad, now, oldStats)
-	}
-
-	if err := s.applyHeartbeatShardStatisticsUpdate(ctx, namespace, executorID, assignedState.ModRevision, updatedStats); err != nil {
-		return fmt.Errorf("apply shard statistics update: %w", err)
-	}
-	return nil
-}
-
-func (s *executorStoreImpl) applyHeartbeatShardStatisticsUpdate(
-	ctx context.Context,
-	namespace string,
-	executorID string,
-	assignedStateModRevision int64,
-	stats map[string]etcdtypes.ShardStatistics,
-) error {
-	payload, err := json.Marshal(stats)
+	payload, err := json.Marshal(storedStatistics)
 	if err != nil {
 		return fmt.Errorf("marshal executor shard statistics: %w", err)
 	}
@@ -239,81 +180,39 @@ func (s *executorStoreImpl) applyHeartbeatShardStatisticsUpdate(
 	assignedStateKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorAssignedStateKey)
 	statsKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorShardStatisticsKey)
 	txnResp, err := s.client.Txn(ctx).
-		If(clientv3.Compare(clientv3.ModRevision(assignedStateKey), "=", assignedStateModRevision)).
+		If(clientv3.Compare(clientv3.ModRevision(assignedStateKey), "=", assignmentModRevision)).
 		Then(clientv3.OpPut(statsKey, string(compressedPayload))).
 		Commit()
 	if err != nil {
 		return fmt.Errorf("put executor shard statistics: %w", err)
 	}
 	if !txnResp.Succeeded {
-		// The assignment changed after the heartbeat snapshot was read. Statistics
-		// are best effort, so discard this stale sample without retrying.
-		return nil
+		return fmt.Errorf("%w: executor assignment changed", store.ErrVersionConflict)
 	}
 	return nil
 }
 
-func (s *executorStoreImpl) updateShardStatistic(namespace, executorID, shardID string, shardLoad float64, now time.Time, oldStats map[string]etcdtypes.ShardStatistics) etcdtypes.ShardStatistics {
-	var stats etcdtypes.ShardStatistics
-
-	prevStats, ok := oldStats[shardID]
-	if ok {
-		stats.LastMoveTime = prevStats.LastMoveTime
-	}
-
-	prevSmoothed := prevStats.SmoothedLoad
-	prevUpdate := prevStats.LastUpdateTime.ToTime()
-	newSmoothed, err := statistics.CalculateSmoothedLoad(
-		prevSmoothed,
-		shardLoad,
-		prevUpdate,
-		now,
-		s.loadSmoothingTimeConstant(namespace),
-	)
-	if err != nil {
-		s.logger.Error("failed to calculate smoothed load",
-			tag.ShardNamespace(namespace),
-			tag.ShardExecutor(executorID),
-			tag.ShardKey(shardID),
-		)
-		return etcdtypes.ShardStatistics{LastMoveTime: stats.LastMoveTime}
-	}
-
-	stats.SmoothedLoad = newSmoothed
-	stats.LastUpdateTime = etcdtypes.Time(now)
-
-	return stats
-}
-
-func (s *executorStoreImpl) loadSmoothingTimeConstant(namespace string) time.Duration {
-	if s.cfg == nil || s.cfg.LoadBalancingGreedy.LoadSmoothingTimeConstant == nil {
-		return statistics.DefaultLoadSmoothingTimeConstant
-	}
-	return s.cfg.LoadBalancingGreedy.LoadSmoothingTimeConstant(namespace)
-}
-
-// GetHeartbeat retrieves the heartbeat, assignment, and statistics snapshots
-// for a single executor.
-func (s *executorStoreImpl) GetHeartbeat(ctx context.Context, namespace string, executorID string) (*store.HeartbeatState, *store.AssignedState, map[string]store.ShardStatistics, error) {
+// GetExecutorState retrieves the persisted state for a single executor.
+func (s *executorStoreImpl) GetExecutorState(ctx context.Context, namespace string, executorID string) (store.ExecutorState, error) {
 	// The prefix for all keys related to a single executor.
 	executorIDPrefix := etcdkeys.BuildExecutorIDPrefix(s.prefix, namespace, executorID)
 	resp, err := s.client.Get(ctx, executorIDPrefix, clientv3.WithPrefix())
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("etcd get failed for executor %s: %w", executorID, err)
+		return store.ExecutorState{}, fmt.Errorf("etcd get failed for executor %s: %w", executorID, err)
 	}
 
 	if resp.Count == 0 {
-		return nil, nil, nil, store.ErrExecutorNotFound
+		return store.ExecutorState{}, store.ErrExecutorNotFound
 	}
 
 	parsedData, err := common.ParseExecutorKVs(s.prefix, namespace, resp.Kvs)
 	if err != nil {
-		return nil, nil, nil, err
+		return store.ExecutorState{}, err
 	}
 
 	executorData, ok := parsedData[executorID]
 	if !ok {
-		return nil, nil, nil, store.ErrExecutorNotFound
+		return store.ExecutorState{}, store.ErrExecutorNotFound
 	}
 
 	heartbeatState := &store.HeartbeatState{
@@ -333,7 +232,11 @@ func (s *executorStoreImpl) GetHeartbeat(ctx context.Context, namespace string, 
 		statistics[shardID] = *stats.ToShardStatistics()
 	}
 
-	return heartbeatState, assignedState, statistics, nil
+	return store.ExecutorState{
+		Heartbeat:  heartbeatState,
+		Assignment: assignedState,
+		Statistics: statistics,
+	}, nil
 }
 
 // --- ShardStore Implementation ---

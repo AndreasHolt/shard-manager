@@ -1513,7 +1513,7 @@ const (
 	ShardDistributorStoreDeleteExecutorsScope
 	ShardDistributorStoreGetShardStatsScope
 	ShardDistributorStoreDeleteShardStatsScope
-	ShardDistributorStoreGetHeartbeatScope
+	ShardDistributorStoreGetExecutorStateScope
 	ShardDistributorStoreGetExecutorScope
 	ShardDistributorStoreGetStateScope
 	ShardDistributorStoreRecordHeartbeatScope
@@ -2236,7 +2236,7 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		ShardDistributorStoreDeleteExecutorsScope:                  {operation: "StoreDeleteExecutors"},
 		ShardDistributorStoreGetShardStatsScope:                    {operation: "StoreGetShardStats"},
 		ShardDistributorStoreDeleteShardStatsScope:                 {operation: "StoreDeleteShardStats"},
-		ShardDistributorStoreGetHeartbeatScope:                     {operation: "StoreGetHeartbeat"},
+		ShardDistributorStoreGetExecutorStateScope:                 {operation: "StoreGetExecutorState"},
 		ShardDistributorStoreGetExecutorScope:                      {operation: "StoreGetExecutor"},
 		ShardDistributorStoreGetStateScope:                         {operation: "StoreGetState"},
 		ShardDistributorStoreRecordHeartbeatScope:                  {operation: "StoreRecordHeartbeat"},

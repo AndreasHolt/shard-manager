@@ -3,8 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-
-	"github.com/cadence-workflow/shard-manager/common/types"
 )
 
 //go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination=store_mock.go Store
@@ -94,9 +92,9 @@ type Store interface {
 	// GetExecutor retrieves an executor within a namespace.
 	GetExecutor(ctx context.Context, namespace string, executorID string) (*ShardOwner, error)
 
-	GetHeartbeat(ctx context.Context, namespace string, executorID string) (*HeartbeatState, *AssignedState, map[string]ShardStatistics, error)
+	GetExecutorState(ctx context.Context, namespace string, executorID string) (ExecutorState, error)
 	RecordHeartbeat(ctx context.Context, namespace, executorID string, state HeartbeatState) error
-	RecordShardStatistics(ctx context.Context, namespace, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *AssignedState, previousStats map[string]ShardStatistics) error
+	RecordShardStatistics(ctx context.Context, namespace, executorID string, assignmentModRevision int64, statistics map[string]ShardStatistics) error
 
 	DeleteShardStats(ctx context.Context, namespace string, shardIDs []string, guard GuardFunc) error
 
