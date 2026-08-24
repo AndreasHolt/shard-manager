@@ -3091,7 +3091,7 @@ const (
 	ShardDistributorAssignLoopLoadBasedMoves
 	// ShardDistributorAssignLoopDeletedShards counts the number of shards removed (DONE status) in a rebalance cycle
 	ShardDistributorAssignLoopDeletedShards
-	// ShardDistributorAssignLoopMovedShardLoad tracks the load of a shard that was moved due to load rebalancing
+	// ShardDistributorAssignLoopMovedShardLoad counts the reported load of shards moved due to load rebalancing
 	ShardDistributorAssignLoopMovedShardLoad
 
 	// ShardDistributorAssignmentLoadMaxOverMean measures max/mean across executor reported loads
@@ -3932,7 +3932,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 
 		ShardDistributorAssignLoopLoadBasedMoves: {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
 		ShardDistributorAssignLoopDeletedShards:  {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
-		ShardDistributorAssignLoopMovedShardLoad: {metricName: "shard_distributor_shard_assign_moved_shard_load", metricType: Gauge},
+		ShardDistributorAssignLoopMovedShardLoad: {metricName: "shard_distributor_shard_assign_moved_reported_load", metricType: Counter},
 
 		ShardDistributorAssignmentLoadMaxOverMean:         {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
 		ShardDistributorAssignmentLoadCV:                  {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},

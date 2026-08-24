@@ -52,6 +52,7 @@ func PlanRebalance(
 	}
 	moves := make([]plan.Move, 0, moveBudget)
 	movedShards := make(map[string]struct{})
+	movedReportedLoad := 0.0
 
 	// Plan multiple moves per cycle (within budget), recomputing eligibility after each move.
 	// Stop early once sources/destinations are empty, i.e. imbalance is within hysteresis bands.
@@ -68,12 +69,15 @@ func PlanRebalance(
 		shardLoad := namespaceState.ShardStats[move.ShardID].SmoothedLoad
 		logGreedyMove(logger, loads, move, shardLoad)
 		if metricsScope != nil {
-			metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, shardLoad)
+			if report := namespaceState.Executors[move.From].ReportedShards[move.ShardID]; report != nil {
+				movedReportedLoad += report.ShardLoad
+			}
 		}
 		moveBudget--
 	}
 	if len(moves) > 0 && metricsScope != nil {
 		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(len(moves)))
+		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopMovedShardLoad, int64(movedReportedLoad))
 	}
 	return moves, nil
 }

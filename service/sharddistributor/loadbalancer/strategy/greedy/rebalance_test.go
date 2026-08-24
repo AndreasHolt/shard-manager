@@ -11,6 +11,7 @@ import (
 
 	"github.com/cadence-workflow/shard-manager/common/log"
 	"github.com/cadence-workflow/shard-manager/common/metrics"
+	metricsmocks "github.com/cadence-workflow/shard-manager/common/metrics/mocks"
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/loadbalancer/plan"
@@ -87,6 +88,11 @@ func TestLoadBalance_Convergence(t *testing.T) {
 
 // TestLoadBalance_SkipsNonBeneficialHotShard verifies we skip hot shards that would not improve balance.
 func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
+	const (
+		expectedMoveCount         = 1
+		expectedMovedReportedLoad = 0
+	)
+
 	cfg := testGreedyConfig()
 
 	execA, execB := "exec-A", "exec-B"
@@ -101,7 +107,11 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 	}
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
-			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execA: {
+				Status:         types.ExecutorStatusACTIVE,
+				LastHeartbeat:  now,
+				ReportedShards: map[string]*types.ShardStatusReport{"warm": {ShardLoad: expectedMovedReportedLoad}},
+			},
 			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
 		},
 		ShardAssignments: map[string]store.AssignedState{
@@ -115,9 +125,14 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 		},
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
+	metricsScope := &metricsmocks.Scope{}
+	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedShardLoad, int64(expectedMovedReportedLoad)).Once()
+	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(expectedMoveCount)).Once()
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metricsScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
+	metricsScope.AssertExpectations(t)
 	applyMoves(t, currentAssignments, moves)
 	assert.True(t, slices.Contains(currentAssignments[execB], "warm"))
 	assert.False(t, slices.Contains(currentAssignments[execB], "hot"))
