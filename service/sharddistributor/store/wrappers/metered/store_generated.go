@@ -10,7 +10,6 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/log"
 	"github.com/cadence-workflow/shard-manager/common/metrics"
-	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
@@ -120,13 +119,13 @@ func (c *meteredStore) GetExecutor(ctx context.Context, namespace string, execut
 	return
 }
 
-func (c *meteredStore) GetHeartbeat(ctx context.Context, namespace string, executorID string) (hp1 *store.HeartbeatState, ap1 *store.AssignedState, m1 map[string]store.ShardStatistics, err error) {
+func (c *meteredStore) GetExecutorState(ctx context.Context, namespace string, executorID string) (e1 store.ExecutorState, err error) {
 	op := func() error {
-		hp1, ap1, m1, err = c.wrapped.GetHeartbeat(ctx, namespace, executorID)
+		e1, err = c.wrapped.GetExecutorState(ctx, namespace, executorID)
 		return err
 	}
 
-	err = c.call(metrics.ShardDistributorStoreGetHeartbeatScope, op, metrics.NamespaceTag(namespace))
+	err = c.call(metrics.ShardDistributorStoreGetExecutorStateScope, op, metrics.NamespaceTag(namespace))
 	return
 }
 
@@ -160,9 +159,9 @@ func (c *meteredStore) RecordHeartbeat(ctx context.Context, namespace string, ex
 	return
 }
 
-func (c *meteredStore) RecordShardStatistics(ctx context.Context, namespace string, executorID string, reportedShards map[string]*types.ShardStatusReport, assignedState *store.AssignedState, previousStats map[string]store.ShardStatistics) (err error) {
+func (c *meteredStore) RecordShardStatistics(ctx context.Context, namespace string, executorID string, assignmentModRevision int64, statistics map[string]store.ShardStatistics) (err error) {
 	op := func() error {
-		err = c.wrapped.RecordShardStatistics(ctx, namespace, executorID, reportedShards, assignedState, previousStats)
+		err = c.wrapped.RecordShardStatistics(ctx, namespace, executorID, assignmentModRevision, statistics)
 		return err
 	}
 

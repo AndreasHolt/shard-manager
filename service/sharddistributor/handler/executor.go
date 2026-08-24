@@ -12,6 +12,7 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
+	"github.com/cadence-workflow/shard-manager/service/sharddistributor/loadbalancer"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
@@ -22,31 +23,31 @@ const (
 )
 
 type executor struct {
-	logger               log.Logger
-	timeSource           clock.TimeSource
-	storage              store.Store
-	shardDistributionCfg config.ShardDistribution
-	metricsClient        metrics.Client
+	logger        log.Logger
+	timeSource    clock.TimeSource
+	storage       store.Store
+	sdConfig      *config.Config
+	metricsClient metrics.Client
 }
 
 func NewExecutorHandler(
 	logger log.Logger,
 	storage store.Store,
 	timeSource clock.TimeSource,
-	shardDistributionCfg config.ShardDistribution,
+	cfg *config.Config,
 	metricsClient metrics.Client,
 ) Executor {
 	return &executor{
-		logger:               logger,
-		timeSource:           timeSource,
-		storage:              storage,
-		shardDistributionCfg: shardDistributionCfg,
-		metricsClient:        metricsClient,
+		logger:        logger,
+		timeSource:    timeSource,
+		storage:       storage,
+		sdConfig:      cfg,
+		metricsClient: metricsClient,
 	}
 }
 
 func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbeatRequest) (*types.ExecutorHeartbeatResponse, error) {
-	previousHeartbeat, assignedShards, previousStats, err := h.storage.GetHeartbeat(ctx, request.Namespace, request.ExecutorID)
+	executorState, err := h.storage.GetExecutorState(ctx, request.Namespace, request.ExecutorID)
 	// We ignore Executor not found errors, since it just means that this executor heartbeat the first time.
 	if err != nil && !errors.Is(err, store.ErrExecutorNotFound) {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get heartbeat: %v", err)}
@@ -70,22 +71,62 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to record heartbeat: %v", err)}
 	}
 
-	err = h.storage.RecordShardStatistics(ctx, request.Namespace, request.ExecutorID, request.ShardStatusReports, assignedShards, previousStats)
-	if err != nil {
-		h.logger.Error("failed to record shard statistics",
-			tag.Error(err),
-			tag.ShardNamespace(request.Namespace),
-			tag.ShardExecutor(request.ExecutorID),
-		)
-	}
+	h.recordShardStatistics(ctx, request, executorState.Assignment, executorState.Statistics, heartbeatTime)
 
 	// emit shard assignment metrics only if shards are assigned in the background
 	// shard assignment in heartbeat doesn't involve any assignment changes happening in the background
 	// thus there was no shard handover and no assignment distribution latency
 	// to measure, so don't need to emit metrics in that case
-	h.emitShardAssignmentMetrics(request.Namespace, heartbeatTime, previousHeartbeat, assignedShards)
+	h.emitShardAssignmentMetrics(request.Namespace, heartbeatTime, executorState.Heartbeat, executorState.Assignment)
 
-	return _convertResponse(assignedShards, types.MigrationModeONBOARDED), nil
+	return _convertResponse(executorState.Assignment, types.MigrationModeONBOARDED), nil
+}
+
+func (h *executor) recordShardStatistics(
+	ctx context.Context,
+	request *types.ExecutorHeartbeatRequest,
+	assignedState *store.AssignedState,
+	previousStats map[string]store.ShardStatistics,
+	now time.Time,
+) {
+	updatedStats, shouldWrite, err := loadbalancer.PrepareShardStatistics(
+		h.sdConfig,
+		request.Namespace,
+		request.ExecutorID,
+		request.ShardStatusReports,
+		assignedState,
+		previousStats,
+		now,
+		h.logger,
+	)
+	if err != nil {
+		h.logger.Warn("failed to prepare shard statistics",
+			tag.Error(err),
+			tag.ShardNamespace(request.Namespace),
+			tag.ShardExecutor(request.ExecutorID),
+		)
+		return
+	}
+	if !shouldWrite {
+		return
+	}
+
+	err = h.storage.RecordShardStatistics(
+		ctx,
+		request.Namespace,
+		request.ExecutorID,
+		assignedState.ModRevision,
+		updatedStats,
+	)
+	if err == nil || errors.Is(err, store.ErrVersionConflict) {
+		return
+	}
+
+	h.logger.Warn("failed to record shard statistics",
+		tag.Error(err),
+		tag.ShardNamespace(request.Namespace),
+		tag.ShardExecutor(request.ExecutorID),
+	)
 }
 
 // emitShardAssignmentMetrics emits the following metrics for newly assigned shards:

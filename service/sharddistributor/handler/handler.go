@@ -225,7 +225,7 @@ func (h *handlerImpl) GetExecutorState(ctx context.Context, request *types.GetEx
 		}
 	}
 
-	heartbeatState, assignedState, _, err := h.storage.GetHeartbeat(ctx, request.GetNamespace(), request.GetExecutorID())
+	executorState, err := h.storage.GetExecutorState(ctx, request.GetNamespace(), request.GetExecutorID())
 	if errors.Is(err, store.ErrExecutorNotFound) {
 		return nil, &types.EntityNotExistsError{
 			Message: fmt.Sprintf("executor not found %v:%v", request.GetNamespace(), request.GetExecutorID()),
@@ -234,6 +234,8 @@ func (h *handlerImpl) GetExecutorState(ctx context.Context, request *types.GetEx
 	if err != nil {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get executor state: %v", err)}
 	}
+	heartbeatState := executorState.Heartbeat
+	assignedState := executorState.Assignment
 
 	assignedShards := make([]*types.ExecutorAssignedShardState, 0)
 	if assignedState != nil {
