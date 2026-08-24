@@ -163,10 +163,7 @@ func (s *executorStoreImpl) RecordShardStatistics(
 	assignmentModRevision int64,
 	statistics map[string]store.ShardStatistics,
 ) error {
-	storedStatistics := make(map[string]etcdtypes.ShardStatistics, len(statistics))
-	for shardID, stats := range statistics {
-		storedStatistics[shardID] = *etcdtypes.FromShardStatistics(&stats)
-	}
+	storedStatistics := etcdtypes.FromShardStatisticsMap(statistics)
 
 	payload, err := json.Marshal(storedStatistics)
 	if err != nil {
@@ -227,10 +224,7 @@ func (s *executorStoreImpl) GetExecutorState(ctx context.Context, namespace stri
 		assignedState = executorData.AssignedState.ToAssignedState()
 	}
 
-	statistics := make(map[string]store.ShardStatistics, len(executorData.Statistics))
-	for shardID, stats := range executorData.Statistics {
-		statistics[shardID] = *stats.ToShardStatistics()
-	}
+	statistics := etcdtypes.ToShardStatisticsMap(executorData.Statistics)
 
 	return store.ExecutorState{
 		Heartbeat:  heartbeatState,
