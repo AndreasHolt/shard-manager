@@ -416,12 +416,9 @@ func TestLoadBalance_BudgetConstraint(t *testing.T) {
 
 // TestLoadBalance_MultiMovePerCycle verifies multiple moves can be planned within a single pass up to the budget.
 func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
-	const (
-		reportedShardLoad = 0.6
-		expectedMoveCount = 2
-	)
-
 	cfg := testGreedyConfig()
+	reportedShardLoad := 0.6
+	expectedMoveCount := 2
 
 	execA, execB := "exec-A", "exec-B"
 	initialExecAShardCount := 100
@@ -457,8 +454,7 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 	expectedBudget := computeMoveBudget(totalShards, cfg.MoveBudgetProportion(testNamespace))
 	require.Equal(t, expectedMoveCount, expectedBudget)
 	// AddCounter accepts int64, so the aggregated 1.2 reported load is emitted as 1.
-	aggregatedReportedLoad := float64(expectedMoveCount) * reportedShardLoad
-	expectedMovedLoad := int64(aggregatedReportedLoad)
+	expectedMovedLoad := int64(float64(expectedMoveCount) * reportedShardLoad)
 
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
