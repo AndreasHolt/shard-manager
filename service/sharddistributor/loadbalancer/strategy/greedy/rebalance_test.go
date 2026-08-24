@@ -425,6 +425,8 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 	cfg := testGreedyConfig()
 
 	execA, execB := "exec-A", "exec-B"
+	initialExecAShardCount := 100
+	initialExecBShardCount := 50
 	now := time.Now().UTC()
 
 	assignments := map[string]store.AssignedState{
@@ -438,14 +440,14 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 	shardStats := make(map[string]store.ShardStatistics)
 	reportedShards := make(map[string]*types.ShardStatusReport)
 
-	for i := range 100 {
+	for i := range initialExecAShardCount {
 		sID := fmt.Sprintf("A-%d", i)
 		assignments[execA].AssignedShards[sID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		currentAssignments[execA] = append(currentAssignments[execA], sID)
 		shardStats[sID] = store.ShardStatistics{SmoothedLoad: 2.0, LastUpdateTime: now}
 		reportedShards[sID] = &types.ShardStatusReport{ShardLoad: reportedShardLoad}
 	}
-	for i := range 50 {
+	for i := range initialExecBShardCount {
 		sID := fmt.Sprintf("B-%d", i)
 		assignments[execB].AssignedShards[sID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		currentAssignments[execB] = append(currentAssignments[execB], sID)
@@ -474,8 +476,8 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 	require.NotEmpty(t, moves)
 	metricsScope.AssertExpectations(t)
 	applyMoves(t, currentAssignments, moves)
-	assert.Equal(t, 100-expectedBudget, len(currentAssignments[execA]), "ExecA should shed budgeted shards")
-	assert.Equal(t, 50+expectedBudget, len(currentAssignments[execB]), "ExecB should gain budgeted shards")
+	assert.Equal(t, initialExecAShardCount-expectedBudget, len(currentAssignments[execA]), "ExecA should shed budgeted shards")
+	assert.Equal(t, initialExecBShardCount+expectedBudget, len(currentAssignments[execB]), "ExecB should gain budgeted shards")
 }
 
 // TestLoadBalance_PerShardCooldownSkipsHotShard verifies a recently moved hot shard is skipped due to cooldown.
