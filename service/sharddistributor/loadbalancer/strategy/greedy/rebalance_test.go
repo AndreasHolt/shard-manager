@@ -88,11 +88,6 @@ func TestLoadBalance_Convergence(t *testing.T) {
 
 // TestLoadBalance_SkipsNonBeneficialHotShard verifies we skip hot shards that would not improve balance.
 func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
-	const (
-		expectedMoveCount         = 1
-		expectedMovedReportedLoad = 0
-	)
-
 	cfg := testGreedyConfig()
 
 	execA, execB := "exec-A", "exec-B"
@@ -107,11 +102,7 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 	}
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
-			execA: {
-				Status:         types.ExecutorStatusACTIVE,
-				LastHeartbeat:  now,
-				ReportedShards: map[string]*types.ShardStatusReport{"warm": {ShardLoad: expectedMovedReportedLoad}},
-			},
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
 			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
 		},
 		ShardAssignments: map[string]store.AssignedState{
@@ -125,14 +116,9 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 		},
 	}
 
-	metricsScope := &metricsmocks.Scope{}
-	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedShardLoad, int64(expectedMovedReportedLoad)).Once()
-	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(expectedMoveCount)).Once()
-
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metricsScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
-	metricsScope.AssertExpectations(t)
 	applyMoves(t, currentAssignments, moves)
 	assert.True(t, slices.Contains(currentAssignments[execB], "warm"))
 	assert.False(t, slices.Contains(currentAssignments[execB], "hot"))
@@ -430,6 +416,12 @@ func TestLoadBalance_BudgetConstraint(t *testing.T) {
 
 // TestLoadBalance_MultiMovePerCycle verifies multiple moves can be planned within a single pass up to the budget.
 func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
+	const (
+		reportedShardLoad         = 0.6
+		expectedMoveCount         = 2
+		expectedMovedReportedLoad = 1
+	)
+
 	cfg := testGreedyConfig()
 
 	execA, execB := "exec-A", "exec-B"
@@ -444,12 +436,14 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 		execB: {},
 	}
 	shardStats := make(map[string]store.ShardStatistics)
+	reportedShards := make(map[string]*types.ShardStatusReport)
 
 	for i := range 100 {
 		sID := fmt.Sprintf("A-%d", i)
 		assignments[execA].AssignedShards[sID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		currentAssignments[execA] = append(currentAssignments[execA], sID)
 		shardStats[sID] = store.ShardStatistics{SmoothedLoad: 2.0, LastUpdateTime: now}
+		reportedShards[sID] = &types.ShardStatusReport{ShardLoad: reportedShardLoad}
 	}
 	for i := range 50 {
 		sID := fmt.Sprintf("B-%d", i)
@@ -460,19 +454,25 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 
 	totalShards := len(shardStats)
 	expectedBudget := computeMoveBudget(totalShards, cfg.MoveBudgetProportion(testNamespace))
+	require.Equal(t, expectedMoveCount, expectedBudget)
 
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
-			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now, ReportedShards: reportedShards},
 			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
 		},
 		ShardAssignments: assignments,
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
+	metricsScope := &metricsmocks.Scope{}
+	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(expectedMoveCount)).Once()
+	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedShardLoad, int64(expectedMovedReportedLoad)).Once()
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metricsScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
+	metricsScope.AssertExpectations(t)
 	applyMoves(t, currentAssignments, moves)
 	assert.Equal(t, 100-expectedBudget, len(currentAssignments[execA]), "ExecA should shed budgeted shards")
 	assert.Equal(t, 50+expectedBudget, len(currentAssignments[execB]), "ExecB should gain budgeted shards")
