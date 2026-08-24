@@ -417,9 +417,8 @@ func TestLoadBalance_BudgetConstraint(t *testing.T) {
 // TestLoadBalance_MultiMovePerCycle verifies multiple moves can be planned within a single pass up to the budget.
 func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 	const (
-		reportedShardLoad         = 0.6
-		expectedMoveCount         = 2
-		expectedMovedReportedLoad = 1
+		reportedShardLoad = 0.6
+		expectedMoveCount = 2
 	)
 
 	cfg := testGreedyConfig()
@@ -457,6 +456,9 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 	totalShards := len(shardStats)
 	expectedBudget := computeMoveBudget(totalShards, cfg.MoveBudgetProportion(testNamespace))
 	require.Equal(t, expectedMoveCount, expectedBudget)
+	// AddCounter accepts int64, so the aggregated 1.2 reported load is emitted as 1.
+	aggregatedReportedLoad := float64(expectedMoveCount) * reportedShardLoad
+	expectedMovedLoad := int64(aggregatedReportedLoad)
 
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
@@ -469,11 +471,11 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 
 	metricsScope := &metricsmocks.Scope{}
 	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(expectedMoveCount)).Once()
-	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedShardLoad, int64(expectedMovedReportedLoad)).Once()
+	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedShardLoad, expectedMovedLoad).Once()
 
 	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metricsScope)
 	require.NoError(t, err)
-	require.NotEmpty(t, moves)
+	require.Len(t, moves, expectedMoveCount)
 	metricsScope.AssertExpectations(t)
 	applyMoves(t, currentAssignments, moves)
 	assert.Equal(t, initialExecAShardCount-expectedBudget, len(currentAssignments[execA]), "ExecA should shed budgeted shards")
