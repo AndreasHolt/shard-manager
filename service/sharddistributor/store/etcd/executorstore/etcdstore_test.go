@@ -166,8 +166,8 @@ func TestRecordShardStatisticsWritesPreparedStatistics(t *testing.T) {
 
 	executorID := "executor-shard-stats"
 	shardID := "shard-with-load"
+	preparedSmoothedLoad := 45.6
 	now := time.Now().UTC()
-	const preparedSmoothedLoad = 45.6
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
@@ -200,10 +200,8 @@ func TestRecordShardStatisticsReturnsConflictForStaleAssignment(t *testing.T) {
 
 	executorID := "executor-stale-snapshot"
 	shardID := "shard-with-stats"
-	const (
-		initialSmoothedLoad = 10.0
-		staleSmoothedLoad   = 1000.0
-	)
+	initialSmoothedLoad := 10.0
+	staleSmoothedLoad := 1000.0
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))

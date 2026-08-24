@@ -15,20 +15,20 @@ import (
 )
 
 func TestPrepareShardStatistics(t *testing.T) {
-	const (
-		previousUpdatedShardLoad = 10.0
-		preservedShardLoad       = 20.0
-		updatedShardLoad         = 30.0
-		unassignedShardLoad      = 1000.0
-		expectedWarningCount     = 1
-	)
-
 	now := time.Now().UTC()
 	previousUpdateTime := now.Add(-time.Minute)
 	previousMoveTime := now.Add(-time.Hour)
+
 	updatedShardID := "updated-shard"
+	previousUpdatedShardLoad := 10.0
+	updatedShardLoad := 30.0
+
 	preservedShardID := "preserved-shard"
+	preservedShardLoad := 20.0
+
 	unassignedShardID := "unassigned-shard"
+	unassignedShardLoad := 1000.0
+
 	emptyReportShardID := "empty-report-shard"
 
 	assignedState := &store.AssignedState{
@@ -77,19 +77,24 @@ func TestPrepareShardStatistics(t *testing.T) {
 		preservedShardID: previousStats[preservedShardID],
 	}
 	assert.Equal(t, expectedStats, got)
-	assert.Equal(t, expectedWarningCount, logs.FilterMessage("empty report, skipping smoothed load update").Len())
+	entries := logs.FilterMessage("empty report, skipping smoothed load update").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, zapcore.WarnLevel, entries[0].Level)
 }
 
 func TestPrepareShardStatisticsReturnsNoUpdateWithoutEligibleReports(t *testing.T) {
-	const unassignedShardLoad = 100.0
+	assignedShardID := "assigned-shard"
+
+	unassignedShardID := "unassigned-shard"
+	unassignedShardLoad := 100.0
 
 	assignedState := &store.AssignedState{
 		AssignedShards: map[string]*types.ShardAssignment{
-			"assigned-shard": {Status: types.AssignmentStatusREADY},
+			assignedShardID: {Status: types.AssignmentStatusREADY},
 		},
 	}
 	reports := map[string]*types.ShardStatusReport{
-		"unassigned-shard": {ShardLoad: unassignedShardLoad},
+		unassignedShardID: {ShardLoad: unassignedShardLoad},
 	}
 
 	got, shouldWrite := PrepareShardStatistics(
