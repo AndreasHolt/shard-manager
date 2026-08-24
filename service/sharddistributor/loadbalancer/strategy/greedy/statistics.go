@@ -33,6 +33,7 @@ func PrepareShardStatistics(
 	}
 
 	updated := false
+	smoothingTimeConstant := loadSmoothingTimeConstant(cfg, namespace)
 	// An executor may report a shard until it receives the next assignment
 	// response. Only assigned, non-nil reports can update statistics.
 	for shardID, report := range reportedShards {
@@ -50,13 +51,13 @@ func PrepareShardStatistics(
 
 		previous := previousStats[shardID]
 		updatedStats[shardID] = updateShardStatistic(
-			cfg,
 			namespace,
 			executorID,
 			shardID,
 			report.ShardLoad,
 			previous,
 			now,
+			smoothingTimeConstant,
 			logger,
 		)
 		updated = true
@@ -66,13 +67,13 @@ func PrepareShardStatistics(
 }
 
 func updateShardStatistic(
-	cfg config.LoadBalancingGreedyConfig,
 	namespace string,
 	executorID string,
 	shardID string,
 	shardLoad float64,
 	previous store.ShardStatistics,
 	now time.Time,
+	smoothingTimeConstant time.Duration,
 	logger log.Logger,
 ) store.ShardStatistics {
 	newSmoothed, err := statistics.CalculateSmoothedLoad(
@@ -80,7 +81,7 @@ func updateShardStatistic(
 		shardLoad,
 		previous.LastUpdateTime,
 		now,
-		loadSmoothingTimeConstant(cfg, namespace),
+		smoothingTimeConstant,
 	)
 	if err != nil {
 		logger.Error("failed to calculate smoothed load",

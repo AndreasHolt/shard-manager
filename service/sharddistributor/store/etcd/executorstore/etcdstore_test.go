@@ -199,7 +199,7 @@ func TestRecordShardStatisticsReturnsConflictForStaleAssignment(t *testing.T) {
 	defer cancel()
 
 	executorID := "executor-stale-snapshot"
-	shardID := "shard-with-stable-stats"
+	shardID := "shard-with-stats"
 	const (
 		initialSmoothedLoad = 10.0
 		staleSmoothedLoad   = 1000.0
