@@ -69,8 +69,10 @@ func PlanRebalance(
 		shardLoad := namespaceState.ShardStats[move.ShardID].SmoothedLoad
 		logGreedyMove(logger, loads, move, shardLoad)
 		if metricsScope != nil {
-			if report := namespaceState.Executors[move.From].ReportedShards[move.ShardID]; report != nil {
-				movedReportedLoad += report.ShardLoad
+			sourceExecutor := namespaceState.Executors[move.From]
+			movedShardReport := sourceExecutor.ReportedShards[move.ShardID]
+			if movedShardReport != nil {
+				movedReportedLoad += movedShardReport.ShardLoad
 			}
 		}
 		moveBudget--
