@@ -1,11 +1,13 @@
 package greedy
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/cadence-workflow/shard-manager/common/log/testlogger"
 	"github.com/cadence-workflow/shard-manager/common/types"
@@ -103,4 +105,51 @@ func TestPrepareShardStatisticsReturnsNoUpdateWithoutEligibleReports(t *testing.
 
 	assert.False(t, shouldWrite)
 	assert.Empty(t, got)
+}
+
+func TestPrepareShardStatisticsSkipsInvalidReport(t *testing.T) {
+	invalidReportShardID := "invalid-report-shard"
+	invalidReportedLoad := math.NaN()
+	previousSmoothedLoad := 10.0
+
+	validReportShardID := "valid-report-shard"
+	validReportedLoad := 20.0
+
+	now := time.Now().UTC()
+	previousMoveTime := now.Add(-time.Hour)
+	assignedState := &store.AssignedState{
+		AssignedShards: map[string]*types.ShardAssignment{
+			invalidReportShardID: {Status: types.AssignmentStatusREADY},
+			validReportShardID:   {Status: types.AssignmentStatusREADY},
+		},
+	}
+	previousStats := map[string]store.ShardStatistics{
+		invalidReportShardID: {
+			SmoothedLoad: previousSmoothedLoad,
+			LastMoveTime: previousMoveTime,
+		},
+	}
+	reports := map[string]*types.ShardStatusReport{
+		invalidReportShardID: {ShardLoad: invalidReportedLoad},
+		validReportShardID:   {ShardLoad: validReportedLoad},
+	}
+	logger, logs := testlogger.NewObserved(t)
+
+	got, shouldWrite := PrepareShardStatistics(
+		testGreedyConfig(),
+		testNamespace,
+		"executor-1",
+		reports,
+		assignedState,
+		previousStats,
+		now,
+		logger,
+	)
+
+	require.True(t, shouldWrite)
+	assert.Equal(t, previousStats[invalidReportShardID], got[invalidReportShardID])
+	assert.Equal(t, validReportedLoad, got[validReportShardID].SmoothedLoad)
+	entries := logs.FilterMessage("failed to calculate smoothed load").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, zapcore.ErrorLevel, entries[0].Level)
 }

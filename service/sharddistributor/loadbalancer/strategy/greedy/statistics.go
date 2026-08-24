@@ -50,16 +50,23 @@ func PrepareShardStatistics(
 		}
 
 		previous := previousStats[shardID]
-		updatedStats[shardID] = updateShardStatistic(
-			namespace,
-			executorID,
-			shardID,
+		updatedStatistic, err := updateShardStatistic(
 			report.ShardLoad,
 			previous,
 			now,
 			smoothingTimeConstant,
-			logger,
 		)
+		if err != nil {
+			logger.Error("failed to calculate smoothed load",
+				tag.Error(err),
+				tag.ShardNamespace(namespace),
+				tag.ShardExecutor(executorID),
+				tag.ShardKey(shardID),
+			)
+			continue
+		}
+
+		updatedStats[shardID] = updatedStatistic
 		updated = true
 	}
 
@@ -67,15 +74,11 @@ func PrepareShardStatistics(
 }
 
 func updateShardStatistic(
-	namespace string,
-	executorID string,
-	shardID string,
 	shardLoad float64,
 	previous store.ShardStatistics,
 	now time.Time,
 	smoothingTimeConstant time.Duration,
-	logger log.Logger,
-) store.ShardStatistics {
+) (store.ShardStatistics, error) {
 	newSmoothed, err := statistics.CalculateSmoothedLoad(
 		previous.SmoothedLoad,
 		shardLoad,
@@ -84,19 +87,14 @@ func updateShardStatistic(
 		smoothingTimeConstant,
 	)
 	if err != nil {
-		logger.Error("failed to calculate smoothed load",
-			tag.ShardNamespace(namespace),
-			tag.ShardExecutor(executorID),
-			tag.ShardKey(shardID),
-		)
-		return store.ShardStatistics{LastMoveTime: previous.LastMoveTime}
+		return store.ShardStatistics{}, err
 	}
 
 	return store.ShardStatistics{
 		SmoothedLoad:   newSmoothed,
 		LastUpdateTime: now,
 		LastMoveTime:   previous.LastMoveTime,
-	}
+	}, nil
 }
 
 func loadSmoothingTimeConstant(cfg config.LoadBalancingGreedyConfig, namespace string) time.Duration {
