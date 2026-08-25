@@ -370,8 +370,12 @@ func (s *executorStoreImpl) parseDrainedShardKVs(namespace string, kvs []*mvccpb
 	return drained
 }
 
-func (s *executorStoreImpl) SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan map[*store.ShardOwner][]string, func(), error) {
-	return s.shardCache.Subscribe(ctx, namespace)
+func (s *executorStoreImpl) SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan struct{}, func(), error) {
+	return s.shardCache.Subscribe(namespace)
+}
+
+func (s *executorStoreImpl) GetShardAssignments(namespace string) (map[*store.ShardOwner][]string, error) {
+	return s.shardCache.GetShardAssignments(namespace)
 }
 
 func (s *executorStoreImpl) SubscribeToExecutorStatusChanges(ctx context.Context, namespace string) (<-chan int64, error) {
@@ -889,7 +893,17 @@ func (s *executorStoreImpl) DeleteShardStats(ctx context.Context, namespace stri
 	return nil
 }
 
+// GetShardOwner returns the owner of the shard.
+// Drained shards return ErrShardDrained rather than the last assigned owner
 func (s *executorStoreImpl) GetShardOwner(ctx context.Context, namespace, shardID string) (*store.ShardOwner, error) {
+	drained, err := s.shardCache.IsShardDrained(ctx, namespace, shardID)
+	if err != nil {
+		return nil, fmt.Errorf("check shard drained: %w", err)
+	}
+	if drained {
+		return nil, store.ErrShardDrained
+	}
+
 	return s.shardCache.GetShardOwner(ctx, namespace, shardID)
 }
 
