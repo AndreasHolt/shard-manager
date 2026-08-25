@@ -833,7 +833,17 @@ func (s *executorStoreImpl) DeleteShardStats(ctx context.Context, namespace stri
 	return nil
 }
 
+// GetShardOwner returns the owner of the shard.
+// Drained shards return ErrShardDrained rather than the last assigned owner
 func (s *executorStoreImpl) GetShardOwner(ctx context.Context, namespace, shardID string) (*store.ShardOwner, error) {
+	drained, err := s.shardCache.IsShardDrained(ctx, namespace, shardID)
+	if err != nil {
+		return nil, fmt.Errorf("check shard drained: %w", err)
+	}
+	if drained {
+		return nil, store.ErrShardDrained
+	}
+
 	return s.shardCache.GetShardOwner(ctx, namespace, shardID)
 }
 

@@ -15,6 +15,10 @@ var (
 	// ErrShardNotFound is an error that is returned when a shard does not exist.
 	ErrShardNotFound = fmt.Errorf("shard not found")
 
+	// ErrShardDrained is returned for a shard that is drained.
+	// Unlike ErrShardNotFound it must never lead to an assignment.
+	ErrShardDrained = fmt.Errorf("shard drained")
+
 	// ErrVersionConflict is an error that is returned if during operations some precondition failed.
 	ErrVersionConflict = fmt.Errorf("version conflict")
 
@@ -85,7 +89,8 @@ type Store interface {
 	DeleteAssignedStates(ctx context.Context, namespace string, executorIDs []string, guard GuardFunc) error
 
 	// GetShardOwner retrieves the owner of a specific shard within a namespace.
-	// It returns ErrShardNotFound if the shard does not exist.
+	// It returns ErrShardNotFound if the shard does not exist, and ErrShardDrained
+	// if the shard is drained.
 	GetShardOwner(ctx context.Context, namespace, shardID string) (*ShardOwner, error)
 	SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan map[*ShardOwner][]string, func(), error)
 

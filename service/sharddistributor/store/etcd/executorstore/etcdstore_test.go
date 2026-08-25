@@ -3,6 +3,7 @@ package executorstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"testing"
@@ -1250,6 +1251,47 @@ func TestDrainShardsLifecycle(t *testing.T) {
 	drained, err = executorStore.GetDrainedShards(ctx, tc.Namespace)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"shard-C"}, drained)
+}
+
+func TestGetShardOwnerRefusesDrainedShards(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	executorID := "executor-drain-read-path"
+	shardID := "shard-drain-read-path"
+
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{shardID}))
+
+	require.Eventually(t, func() bool {
+		_, err := executorStore.GetShardOwner(ctx, tc.Namespace, shardID)
+		return errors.Is(err, store.ErrShardDrained)
+	}, 5*time.Second, 50*time.Millisecond)
+
+	_, err := executorStore.UndrainShards(ctx, tc.Namespace, []string{shardID})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		owner, err := executorStore.GetShardOwner(ctx, tc.Namespace, shardID)
+		return err == nil && owner.ExecutorID == executorID
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestGetShardOwnerReportsDrainedForUnassignedShard(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"never-assigned"}))
+
+	require.Eventually(t, func() bool {
+		_, err := executorStore.GetShardOwner(ctx, tc.Namespace, "never-assigned")
+		return errors.Is(err, store.ErrShardDrained)
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 // UndrainShards reports only the shards it actually removed. A shard that was never
