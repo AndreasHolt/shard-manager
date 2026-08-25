@@ -453,8 +453,8 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 	totalShards := len(shardStats)
 	expectedBudget := computeMoveBudget(totalShards, cfg.MoveBudgetProportion(testNamespace))
 	require.Equal(t, expectedMoveCount, expectedBudget)
-	// AddCounter accepts int64, so the aggregated 1.2 reported load is emitted as 1.
-	expectedMovedLoad := int64(float64(expectedMoveCount) * reportedShardLoad)
+	// The counter stores milli-load, so the aggregated 1.2 reported load is emitted as 1200.
+	expectedMovedLoadMilli := int64(float64(expectedMoveCount) * reportedShardLoad * 1000)
 
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
@@ -467,7 +467,7 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 
 	metricsScope := &metricsmocks.Scope{}
 	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(expectedMoveCount)).Once()
-	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedShardLoad, expectedMovedLoad).Once()
+	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedLoadMilli, expectedMovedLoadMilli).Once()
 
 	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metricsScope)
 	require.NoError(t, err)
