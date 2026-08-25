@@ -37,7 +37,12 @@ type base struct {
 	timeSource   clock.TimeSource
 }
 
-func (p *base) updateErrorMetricPerNamespace(err error, scopeWithNamespaceTags metrics.Scope) {
+func (p *base) updateErrorMetricPerNamespace(scope metrics.ScopeIdx, err error, scopeWithNamespaceTags metrics.Scope) {
+	if isShardStatisticsSkip(scope, err) {
+		scopeWithNamespaceTags.IncCounter(metrics.ShardDistributorStoreShardStatisticsSkipped)
+		return
+	}
+
 	if errors.Is(err, store.ErrExecutorNotFound) {
 		scopeWithNamespaceTags.IncCounter(metrics.ShardDistributorStoreExecutorNotFound)
 	}
@@ -55,7 +60,12 @@ func (p *base) call(scope metrics.ScopeIdx, op func() error, tags ...metrics.Tag
 	metricsScope.RecordHistogramDuration(metrics.ShardDistributorStoreLatencyHistogramPerNamespace, duration)
 
 	if err != nil {
-		p.updateErrorMetricPerNamespace(err, metricsScope)
+		p.updateErrorMetricPerNamespace(scope, err, metricsScope)
 	}
 	return err
+}
+
+func isShardStatisticsSkip(scope metrics.ScopeIdx, err error) bool {
+	return scope == metrics.ShardDistributorStoreRecordShardStatisticsScope &&
+		errors.Is(err, store.ErrVersionConflict)
 }

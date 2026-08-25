@@ -2,6 +2,7 @@ package metered
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -84,6 +85,68 @@ func TestMeteredStore_GetExecutorState(t *testing.T) {
 			latencyHistogramName := "test.shard_distributor_store_latency_histogram_per_namespace+namespace=test_namespace,operation=StoreGetExecutorState"
 			allHistograms := testScope.Snapshot().Histograms()
 			assert.Contains(t, allHistograms, latencyHistogramName)
+		})
+	}
+}
+
+func TestMeteredStore_RecordShardStatisticsErrorMetrics(t *testing.T) {
+	assignmentChangedError := fmt.Errorf("%w: executor assignment changed", store.ErrVersionConflict)
+
+	tests := []struct {
+		name                string
+		storeError          error
+		expectSkippedMetric bool
+		expectFailureMetric bool
+	}{
+		{
+			name:                "AssignmentChanged",
+			storeError:          assignmentChangedError,
+			expectSkippedMetric: true,
+		},
+		{
+			name:                "StoreFailure",
+			storeError:          assert.AnError,
+			expectFailureMetric: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			assignmentModRevision := int64(1)
+			statistics := map[string]store.ShardStatistics{
+				"shard-1": {SmoothedLoad: 12.3},
+			}
+
+			testScope := tally.NewTestScope("test", nil)
+			metricsClient := metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
+			timeSource := clock.NewMockedTimeSource()
+			mockStore := store.NewMockStore(ctrl)
+			mockStore.EXPECT().RecordShardStatistics(
+				gomock.Any(),
+				_testNamespace,
+				_testExecutorID,
+				assignmentModRevision,
+				statistics,
+			).Return(tt.storeError)
+
+			wrapped := NewStore(mockStore, metricsClient, log.NewNoop(), timeSource)
+
+			err := wrapped.RecordShardStatistics(
+				context.Background(),
+				_testNamespace,
+				_testExecutorID,
+				assignmentModRevision,
+				statistics,
+			)
+			assert.Equal(t, tt.storeError, err)
+
+			counters := testScope.Snapshot().Counters()
+			skippedMetricName := "test.shard_distributor_store_shard_statistics_skipped+namespace=test_namespace,operation=StoreRecordShardStatistics"
+			failureMetricName := "test.shard_distributor_store_failures_per_namespace+namespace=test_namespace,operation=StoreRecordShardStatistics"
+			assert.Equal(t, tt.expectSkippedMetric, counters[skippedMetricName] != nil)
+			assert.Equal(t, tt.expectFailureMetric, counters[failureMetricName] != nil)
 		})
 	}
 }
