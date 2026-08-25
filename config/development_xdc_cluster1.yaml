@@ -108,8 +108,6 @@ shardDistribution:
     - name: shard-distributor-canary
       type: fixed
       shardNum: 32
-    - name: test-external-assignment
-      type: ephemeral
   leaderStore:
     storageParams:
       endpoints: [localhost:2379]

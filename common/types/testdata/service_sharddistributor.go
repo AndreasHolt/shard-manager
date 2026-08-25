@@ -127,7 +127,7 @@ var (
 				ShardNum: 32,
 			},
 			{
-				Name: "test-external-assignment",
+				Name: "shard-distributor-canary-ephemeral",
 				Type: "ephemeral",
 				Mode: "distributed_pass",
 			},
