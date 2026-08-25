@@ -370,7 +370,7 @@ func (s *executorStoreImpl) parseDrainedShardKVs(namespace string, kvs []*mvccpb
 	return drained
 }
 
-func (s *executorStoreImpl) SubscribeToAssignmentChanges(namespace string) (<-chan struct{}, func(), error) {
+func (s *executorStoreImpl) SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan struct{}, func(), error) {
 	return s.shardCache.Subscribe(namespace)
 }
 

@@ -269,9 +269,9 @@ func (mr *MockStoreMockRecorder) ResetNamespace(ctx, namespace any) *gomock.Call
 }
 
 // SubscribeToAssignmentChanges mocks base method.
-func (m *MockStore) SubscribeToAssignmentChanges(namespace string) (<-chan struct{}, func(), error) {
+func (m *MockStore) SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan struct{}, func(), error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SubscribeToAssignmentChanges", namespace)
+	ret := m.ctrl.Call(m, "SubscribeToAssignmentChanges", ctx, namespace)
 	ret0, _ := ret[0].(<-chan struct{})
 	ret1, _ := ret[1].(func())
 	ret2, _ := ret[2].(error)
@@ -279,9 +279,9 @@ func (m *MockStore) SubscribeToAssignmentChanges(namespace string) (<-chan struc
 }
 
 // SubscribeToAssignmentChanges indicates an expected call of SubscribeToAssignmentChanges.
-func (mr *MockStoreMockRecorder) SubscribeToAssignmentChanges(namespace any) *gomock.Call {
+func (mr *MockStoreMockRecorder) SubscribeToAssignmentChanges(ctx, namespace any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeToAssignmentChanges", reflect.TypeOf((*MockStore)(nil).SubscribeToAssignmentChanges), namespace)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeToAssignmentChanges", reflect.TypeOf((*MockStore)(nil).SubscribeToAssignmentChanges), ctx, namespace)
 }
 
 // SubscribeToExecutorStatusChanges mocks base method.

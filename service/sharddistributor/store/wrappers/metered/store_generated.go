@@ -173,9 +173,15 @@ func (c *meteredStore) ResetNamespace(ctx context.Context, namespace string) (i1
 	return
 }
 
-func (c *meteredStore) SubscribeToAssignmentChanges(namespace string) (ch1 <-chan struct {
+func (c *meteredStore) SubscribeToAssignmentChanges(ctx context.Context, namespace string) (ch1 <-chan struct {
 }, f1 func(), err error) {
-	return c.wrapped.SubscribeToAssignmentChanges(namespace)
+	op := func() error {
+		ch1, f1, err = c.wrapped.SubscribeToAssignmentChanges(ctx, namespace)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreSubscribeToAssignmentChangesScope, op, metrics.NamespaceTag(namespace))
+	return
 }
 
 func (c *meteredStore) SubscribeToExecutorStatusChanges(ctx context.Context, namespace string) (ch1 <-chan int64, err error) {
