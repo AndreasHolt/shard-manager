@@ -92,10 +92,11 @@ type Store interface {
 	// It returns ErrShardNotFound if the shard does not exist, and ErrShardDrained
 	// if the shard is drained.
 	GetShardOwner(ctx context.Context, namespace, shardID string) (*ShardOwner, error)
-	SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan map[*ShardOwner][]string, func(), error)
+	SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan struct{}, func(), error)
 
 	// GetExecutor retrieves an executor within a namespace.
 	GetExecutor(ctx context.Context, namespace string, executorID string) (*ShardOwner, error)
+	GetShardAssignments(namespace string) (map[*ShardOwner][]string, error)
 
 	GetExecutorState(ctx context.Context, namespace string, executorID string) (ExecutorState, error)
 	RecordHeartbeat(ctx context.Context, namespace, executorID string, state HeartbeatState) error
