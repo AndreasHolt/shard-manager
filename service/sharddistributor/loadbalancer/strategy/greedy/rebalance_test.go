@@ -141,19 +141,17 @@ func TestFindBestShardForMove_MinimumLoad(t *testing.T) {
 				"source":      {shardID},
 				"destination": {},
 			}
-			state := &store.NamespaceState{
-				ShardStats: map[string]store.ShardStatistics{
-					shardID: {SmoothedLoad: test.load, LastUpdateTime: now},
-				},
+			shardStats := map[string]store.ShardStatistics{
+				shardID: {SmoothedLoad: test.load, LastUpdateTime: now},
 			}
 			executorLoads := map[string]float64{
 				"source":      1,
 				"destination": 0,
 			}
 
-			gotShard, gotIndex, found := findBestShardForMove(
+			candidate, found := findBestShardForMove(
 				assignments,
-				state,
+				shardStats,
 				"source",
 				"destination",
 				executorLoads,
@@ -164,11 +162,11 @@ func TestFindBestShardForMove_MinimumLoad(t *testing.T) {
 
 			assert.Equal(t, test.wantFound, found)
 			if test.wantFound {
-				assert.Equal(t, shardID, gotShard)
-				assert.Equal(t, 0, gotIndex)
+				assert.Equal(t, shardID, candidate.shardID)
+				assert.Equal(t, test.load, candidate.smoothedLoad)
+				assert.Equal(t, 0, candidate.assignmentIndex)
 			} else {
-				assert.Empty(t, gotShard)
-				assert.Equal(t, -1, gotIndex)
+				assert.Empty(t, candidate.shardID)
 			}
 		})
 	}
