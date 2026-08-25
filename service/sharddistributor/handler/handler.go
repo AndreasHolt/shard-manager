@@ -353,7 +353,7 @@ func (h *handlerImpl) WatchNamespaceState(request *types.WatchNamespaceStateRequ
 	}
 
 	// Subscribe to state changes from storage
-	notifyCh, unSubscribe, err := h.storage.SubscribeToAssignmentChanges(request.Namespace)
+	notifyCh, unSubscribe, err := h.storage.SubscribeToAssignmentChanges(server.Context(), request.Namespace)
 	if err != nil {
 		return &types.InternalServiceError{Message: fmt.Sprintf("failed to subscribe to namespace state: %v", err)}
 	}
