@@ -266,6 +266,20 @@ func (mr *MockStoreMockRecorder) RecordShardStatistics(ctx, namespace, executorI
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordShardStatistics", reflect.TypeOf((*MockStore)(nil).RecordShardStatistics), ctx, namespace, executorID, assignmentModRevision, statistics)
 }
 
+// RecordShardStatisticsBatch mocks base method.
+func (m *MockStore) RecordShardStatisticsBatch(ctx context.Context, namespace string, updates []ExecutorShardStatistics) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordShardStatisticsBatch", ctx, namespace, updates)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordShardStatisticsBatch indicates an expected call of RecordShardStatisticsBatch.
+func (mr *MockStoreMockRecorder) RecordShardStatisticsBatch(ctx, namespace, updates any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordShardStatisticsBatch", reflect.TypeOf((*MockStore)(nil).RecordShardStatisticsBatch), ctx, namespace, updates)
+}
+
 // ResetNamespace mocks base method.
 func (m *MockStore) ResetNamespace(ctx context.Context, namespace string) (int64, error) {
 	m.ctrl.T.Helper()
@@ -310,20 +324,6 @@ func (m *MockStore) SubscribeToExecutorStatusChanges(ctx context.Context, namesp
 func (mr *MockStoreMockRecorder) SubscribeToExecutorStatusChanges(ctx, namespace any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubscribeToExecutorStatusChanges", reflect.TypeOf((*MockStore)(nil).SubscribeToExecutorStatusChanges), ctx, namespace)
-}
-
-// TransferShardStatistics mocks base method.
-func (m *MockStore) TransferShardStatistics(ctx context.Context, namespace string, request TransferShardStatisticsRequest) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TransferShardStatistics", ctx, namespace, request)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// TransferShardStatistics indicates an expected call of TransferShardStatistics.
-func (mr *MockStoreMockRecorder) TransferShardStatistics(ctx, namespace, request any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransferShardStatistics", reflect.TypeOf((*MockStore)(nil).TransferShardStatistics), ctx, namespace, request)
 }
 
 // UndrainShards mocks base method.

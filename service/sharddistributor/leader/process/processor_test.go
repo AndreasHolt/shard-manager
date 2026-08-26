@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/cadence-workflow/shard-manager/common"
 	"github.com/cadence-workflow/shard-manager/common/clock"
@@ -572,6 +573,8 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		},
 	}
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	logger, logs := testlogger.NewObserved(t)
+	processor.logger = logger
 
 	now := mocks.timeSource.Now()
 	// exec-1 has higher smoothed load, so greedy should move one shard to exec-2.
@@ -610,19 +613,23 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 			return nil
 		},
 	)
-	statsErr := errors.New("statistics unavailable")
-	mocks.store.EXPECT().TransferShardStatistics(gomock.Any(), mocks.cfg.Name, gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ string, request store.TransferShardStatisticsRequest) error {
-			assert.Len(t, request.PreviousShardOwners, 100)
-			assert.Len(t, request.NewAssignments["exec-1"].AssignedShards, 49)
-			assert.Len(t, request.NewAssignments["exec-2"].AssignedShards, 51)
-			assert.Equal(t, shardStats, request.PreviousShardStats)
-			return statsErr
+	mocks.store.EXPECT().RecordShardStatisticsBatch(gomock.Any(), mocks.cfg.Name, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, updates []store.ExecutorShardStatistics) error {
+			updatesByExecutor := make(map[string]map[string]store.ShardStatistics, len(updates))
+			for _, update := range updates {
+				updatesByExecutor[update.ExecutorID] = update.Statistics
+			}
+			assert.Len(t, updatesByExecutor["exec-1"], 49)
+			assert.Len(t, updatesByExecutor["exec-2"], 51)
+			return assert.AnError
 		},
 	)
 
 	err := processor.rebalanceShards(context.Background())
 	require.NoError(t, err)
+	entries := logs.FilterMessage("failed to record shard statistics after assignment").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, zapcore.WarnLevel, entries[0].Level)
 }
 
 func TestGetShards_Utility(t *testing.T) {
@@ -1094,7 +1101,7 @@ func TestGetNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
 	mocks.store.EXPECT().GetShardOwner(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, store.ErrShardNotFound).AnyTimes()
 
-	newState, changedExecutors := processor.getNewAssignmentsState(namespaceState, currentAssignments)
+	newState, changedExecutors := processor.getNewAssignmentsState(namespaceState, currentAssignments, now)
 
 	assert.Len(t, newState, 3)
 	assert.Equal(t, map[string]struct{}{"exec-2": {}, "exec-3": {}}, changedExecutors)

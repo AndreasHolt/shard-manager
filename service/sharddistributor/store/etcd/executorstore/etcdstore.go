@@ -48,13 +48,6 @@ type executorStoreImpl struct {
 	metricsClient metrics.Client
 }
 
-// shardStatisticsUpdate holds one executor's complete statistics map after an
-// assignment change.
-type shardStatisticsUpdate struct {
-	executorID string
-	stats      map[string]etcdtypes.ShardStatistics
-}
-
 // ExecutorStoreParams defines the dependencies for the etcd store, for use with fx.
 type ExecutorStoreParams struct {
 	fx.In
@@ -268,11 +261,8 @@ func (s *executorStoreImpl) GetState(ctx context.Context, namespace string) (*st
 			assignedStates[executorID] = *executorData.AssignedState.ToAssignedState()
 		}
 
-		// Only load shard statistics if the load balancing mode requires it
-		if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
-			for shardID, stat := range executorData.Statistics {
-				shardStats[shardID] = *stat.ToShardStatistics()
-			}
+		for shardID, statistics := range executorData.Statistics {
+			shardStats[shardID] = *statistics.ToShardStatistics()
 		}
 	}
 
@@ -924,94 +914,35 @@ func (s *executorStoreImpl) GetDrainedShards(ctx context.Context, namespace stri
 	return slices.Sorted(maps.Keys(drained)), nil
 }
 
-// TransferShardStatistics carries shard statistics between executors after a
-// successful assignment change. The request contains the state snapshot used
-// to plan that assignment.
-func (s *executorStoreImpl) TransferShardStatistics(ctx context.Context, namespace string, request store.TransferShardStatisticsRequest) error {
-	updates := s.prepareShardStatisticsUpdates(request)
-	if err := s.applyShardStatisticsUpdates(ctx, namespace, updates); err != nil {
-		return fmt.Errorf("transfer shard statistics: %w", err)
-	}
-	return nil
-}
-
-// prepareShardStatisticsUpdates calculates the per-executor statistics maps
-// that changed because shards moved or were assigned for the first time.
-func (s *executorStoreImpl) prepareShardStatisticsUpdates(request store.TransferShardStatisticsRequest) []shardStatisticsUpdate {
-	affectedExecutors := make(map[string]struct{})
-	updatedStatsByShard := make(map[string]etcdtypes.ShardStatistics)
-	now := s.timeSource.Now().UTC()
-
-	for newOwnerID, state := range request.NewAssignments {
-		for shardID := range state.AssignedShards {
-			oldOwnerID, previouslyAssigned := request.PreviousShardOwners[shardID]
-			// Statistics stay where they are when the shard keeps the same owner.
-			if previouslyAssigned && oldOwnerID == newOwnerID {
-				continue
-			}
-
-			affectedExecutors[newOwnerID] = struct{}{}
-			if previouslyAssigned {
-				affectedExecutors[oldOwnerID] = struct{}{}
-			}
-
-			// First assignments remain unmeasured. When a measured shard moves,
-			// carry its load history and start its move cooldown.
-			var updatedStats etcdtypes.ShardStatistics
-			if previousStats, ok := request.PreviousShardStats[shardID]; previouslyAssigned && ok {
-				updatedStats = *etcdtypes.FromShardStatistics(&previousStats)
-				updatedStats.LastMoveTime = etcdtypes.Time(now)
-			}
-			updatedStatsByShard[shardID] = updatedStats
-		}
-	}
-
-	updates := make([]shardStatisticsUpdate, 0, len(affectedExecutors))
-	for executorID := range affectedExecutors {
-		assigned := request.NewAssignments[executorID]
-		stats := make(map[string]etcdtypes.ShardStatistics, len(assigned.AssignedShards))
-		for shardID := range assigned.AssignedShards {
-			if updatedStats, ok := updatedStatsByShard[shardID]; ok {
-				stats[shardID] = updatedStats
-				continue
-			}
-			if previousStats, ok := request.PreviousShardStats[shardID]; ok {
-				stats[shardID] = *etcdtypes.FromShardStatistics(&previousStats)
-			}
-		}
-		updates = append(updates, shardStatisticsUpdate{executorID: executorID, stats: stats})
-	}
-
-	return updates
-}
-
-// applyShardStatisticsUpdates updates shard statistics.
-func (s *executorStoreImpl) applyShardStatisticsUpdates(ctx context.Context, namespace string, updates []shardStatisticsUpdate) error {
+// RecordShardStatisticsBatch records complete statistics maps for multiple
+// executors.
+func (s *executorStoreImpl) RecordShardStatisticsBatch(ctx context.Context, namespace string, updates []store.ExecutorShardStatistics) error {
 	var multiError error
 	for _, update := range updates {
-		statsKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, update.executorID, etcdkeys.ExecutorShardStatisticsKey)
+		statsKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, update.ExecutorID, etcdkeys.ExecutorShardStatisticsKey)
 
-		if len(update.stats) == 0 {
+		if len(update.Statistics) == 0 {
 			if _, err := s.client.Delete(ctx, statsKey); err != nil {
-				multiError = errors.Join(multiError, fmt.Errorf("failed to delete executor shard statistics: %w", err))
+				multiError = errors.Join(multiError, fmt.Errorf("failed to delete shard statistics for executor %s: %w", update.ExecutorID, err))
 			}
 			continue
 		}
 
-		payload, err := json.Marshal(update.stats)
+		statistics := etcdtypes.FromShardStatisticsMap(update.Statistics)
+		payload, err := json.Marshal(statistics)
 		if err != nil {
-			multiError = errors.Join(multiError, fmt.Errorf("failed to marshal executor shard statistics: %w", err))
+			multiError = errors.Join(multiError, fmt.Errorf("failed to marshal shard statistics for executor %s: %w", update.ExecutorID, err))
 			continue
 		}
 
 		compressedPayload, err := s.recordWriter.Write(payload)
 		if err != nil {
-			multiError = errors.Join(multiError, fmt.Errorf("failed to compress executor shard statistics: %w", err))
+			multiError = errors.Join(multiError, fmt.Errorf("failed to compress shard statistics for executor %s: %w", update.ExecutorID, err))
 			continue
 		}
 
 		if _, err := s.client.Put(ctx, statsKey, string(compressedPayload)); err != nil {
-			multiError = errors.Join(multiError, fmt.Errorf("failed to put executor shard statistics: %w", err))
+			multiError = errors.Join(multiError, fmt.Errorf("failed to put shard statistics for executor %s: %w", update.ExecutorID, err))
 		}
 	}
 	return multiError

@@ -147,3 +147,49 @@ func TestPrepareShardStatisticsSkipsNaiveMode(t *testing.T) {
 	assert.False(t, shouldWrite)
 	assert.Nil(t, got)
 }
+
+func TestPrepareAssignmentStatisticsDispatch(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		wantUpdates int
+		wantErr     bool
+	}{
+		{name: "naive", mode: config.LoadBalancingModeNAIVE},
+		{name: "greedy", mode: config.LoadBalancingModeGREEDY, wantUpdates: 1},
+		{name: "invalid", mode: config.LoadBalancingModeINVALID, wantErr: true},
+	}
+	newAssignments := map[string]store.AssignedState{
+		"executor-1": {
+			AssignedShards: map[string]*types.ShardAssignment{
+				"shard-1": {Status: types.AssignmentStatusREADY},
+			},
+		},
+	}
+	now := time.Now().UTC()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				LoadBalancingMode: func(string) string { return tt.mode },
+			}
+
+			updates, err := PrepareAssignmentStatistics(
+				cfg,
+				"test-namespace",
+				nil,
+				newAssignments,
+				nil,
+				now,
+			)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, updates)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, updates, tt.wantUpdates)
+		})
+	}
+}

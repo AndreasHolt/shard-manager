@@ -173,6 +173,16 @@ func (c *meteredStore) RecordShardStatistics(ctx context.Context, namespace stri
 	return
 }
 
+func (c *meteredStore) RecordShardStatisticsBatch(ctx context.Context, namespace string, updates []store.ExecutorShardStatistics) (err error) {
+	op := func() error {
+		err = c.wrapped.RecordShardStatisticsBatch(ctx, namespace, updates)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreRecordShardStatisticsBatchScope, op, metrics.NamespaceTag(namespace))
+	return
+}
+
 func (c *meteredStore) ResetNamespace(ctx context.Context, namespace string) (i1 int64, err error) {
 	op := func() error {
 		i1, err = c.wrapped.ResetNamespace(ctx, namespace)
@@ -201,16 +211,6 @@ func (c *meteredStore) SubscribeToExecutorStatusChanges(ctx context.Context, nam
 	}
 
 	err = c.call(metrics.ShardDistributorStoreSubscribeToExecutorStatusChangesScope, op, metrics.NamespaceTag(namespace))
-	return
-}
-
-func (c *meteredStore) TransferShardStatistics(ctx context.Context, namespace string, request store.TransferShardStatisticsRequest) (err error) {
-	op := func() error {
-		err = c.wrapped.TransferShardStatistics(ctx, namespace, request)
-		return err
-	}
-
-	err = c.call(metrics.ShardDistributorStoreTransferShardStatisticsScope, op, metrics.NamespaceTag(namespace))
 	return
 }
 

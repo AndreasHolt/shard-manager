@@ -475,13 +475,19 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return nil
 	}
 
-	isGreedyLoadBalancing := p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY
-	var previousShardOwners map[string]string
-	if isGreedyLoadBalancing {
-		previousShardOwners = namespaceState.ShardOwners()
+	assignmentTime := p.timeSource.Now().UTC()
+	newState, changedExecutors := p.getNewAssignmentsState(namespaceState, currentAssignments, assignmentTime)
+	statisticsUpdates, err := loadbalancer.PrepareAssignmentStatistics(
+		p.sdConfig,
+		p.namespaceCfg.Name,
+		namespaceState.ShardAssignments,
+		newState,
+		namespaceState.ShardStats,
+		assignmentTime,
+	)
+	if err != nil {
+		return fmt.Errorf("prepare assignment statistics: %w", err)
 	}
-
-	newState, changedExecutors := p.getNewAssignmentsState(namespaceState, currentAssignments)
 
 	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 
@@ -498,14 +504,10 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("assign shards: %w", err)
 	}
 
-	if isGreedyLoadBalancing {
-		statsErr := p.shardStore.TransferShardStatistics(ctx, p.namespaceCfg.Name, store.TransferShardStatisticsRequest{
-			PreviousShardOwners: previousShardOwners,
-			NewAssignments:      newState,
-			PreviousShardStats:  namespaceState.ShardStats,
-		})
+	if len(statisticsUpdates) > 0 {
+		statsErr := p.shardStore.RecordShardStatisticsBatch(ctx, p.namespaceCfg.Name, statisticsUpdates)
 		if statsErr != nil {
-			p.logger.Error("failed to transfer shard statistics", tag.Error(statsErr))
+			p.logger.Warn("failed to record shard statistics after assignment", tag.Error(statsErr))
 		}
 	}
 
@@ -661,10 +663,13 @@ func applyMoves(currentAssignments map[string][]string, moves []plan.Move) error
 	return nil
 }
 
-func (p *namespaceProcessor) getNewAssignmentsState(namespaceState *store.NamespaceState, currentAssignments map[string][]string) (map[string]store.AssignedState, map[string]struct{}) {
+func (p *namespaceProcessor) getNewAssignmentsState(
+	namespaceState *store.NamespaceState,
+	currentAssignments map[string][]string,
+	now time.Time,
+) (map[string]store.AssignedState, map[string]struct{}) {
 	newState := make(map[string]store.AssignedState, len(currentAssignments))
 	changedExecutors := make(map[string]struct{})
-	now := p.timeSource.Now().UTC()
 
 	for executorID, shards := range currentAssignments {
 		assignedShardsMap := make(map[string]*types.ShardAssignment)

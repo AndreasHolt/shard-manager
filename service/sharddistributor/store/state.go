@@ -85,6 +85,13 @@ type ShardStatistics struct {
 	LastMoveTime time.Time
 }
 
+// ExecutorShardStatistics contains the complete shard statistics map for one
+// executor.
+type ExecutorShardStatistics struct {
+	ExecutorID string
+	Statistics map[string]ShardStatistics
+}
+
 type ShardOwner struct {
 	ExecutorID string
 	Metadata   map[string]string
@@ -101,8 +108,13 @@ func (ns *NamespaceState) CountExecutorsByStatus() map[types.ExecutorStatus]int 
 
 // ShardOwners flattens the per-executor assignments into a shardID -> executorID lookup
 func (ns *NamespaceState) ShardOwners() map[string]string {
+	return ShardOwners(ns.ShardAssignments)
+}
+
+// ShardOwners flattens per-executor assignments into a shardID -> executorID lookup.
+func ShardOwners(assignments map[string]AssignedState) map[string]string {
 	owners := make(map[string]string)
-	for executorID, assigned := range ns.ShardAssignments {
+	for executorID, assigned := range assignments {
 		for shardID := range assigned.AssignedShards {
 			owners[shardID] = executorID
 		}
