@@ -16,20 +16,20 @@ func TestPrepareAssignmentStatistics(t *testing.T) {
 	sourceExecutorID := "source"
 	sourceShardID := "stay-source"
 	sourceShardStatistics := store.ShardStatistics{
-		SmoothedLoad:   3,
+		SmoothedLoad:   20,
 		LastUpdateTime: now.Add(-time.Minute),
 	}
 
 	destinationExecutorID := "destination"
 	destinationShardID := "stay-destination"
 	destinationShardStatistics := store.ShardStatistics{
-		SmoothedLoad:   7,
+		SmoothedLoad:   10,
 		LastUpdateTime: now.Add(-time.Minute),
 	}
 
 	movedShardID := "move"
 	movedShardStatistics := store.ShardStatistics{
-		SmoothedLoad:   12.5,
+		SmoothedLoad:   5,
 		LastUpdateTime: now.Add(-time.Minute),
 		LastMoveTime:   now.Add(-time.Hour),
 	}
@@ -38,7 +38,8 @@ func TestPrepareAssignmentStatistics(t *testing.T) {
 
 	newShardID := "new"
 
-	// The assignments describe a planned shard move and a first assignment.
+	// Move one shard from the heavier source to the lighter destination, and
+	// assign one new shard.
 	previousStatistics := map[string]store.ShardStatistics{
 		movedShardID:       movedShardStatistics,
 		sourceShardID:      sourceShardStatistics,

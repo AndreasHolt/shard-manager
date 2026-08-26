@@ -14,58 +14,58 @@ func PrepareAssignmentStatistics(
 	previousStatistics map[string]store.ShardStatistics,
 	now time.Time,
 ) []store.ExecutorShardStatistics {
-	previousOwners := store.ShardOwners(previousAssignments)
-	affectedExecutors := findAffectedExecutors(previousOwners, newAssignments)
-	executorStatisticsUpdates := buildStatisticsUpdates(
-		affectedExecutors,
-		previousOwners,
+	previousOwnersByShard := store.ShardOwners(previousAssignments)
+	executorsAffectedByAssignmentChange := findAffectedExecutors(previousOwnersByShard, newAssignments)
+	statisticsUpdatesForAffectedExecutors := buildStatisticsUpdates(
+		executorsAffectedByAssignmentChange,
+		previousOwnersByShard,
 		newAssignments,
 		previousStatistics,
 		now,
 	)
-	return executorStatisticsUpdates
+	return statisticsUpdatesForAffectedExecutors
 }
 
 func findAffectedExecutors(
-	previousOwners map[string]string,
+	previousOwnersByShard map[string]string,
 	newAssignments map[string]store.AssignedState,
 ) map[string]struct{} {
-	affectedExecutors := make(map[string]struct{})
+	executorsAffectedByAssignmentChange := make(map[string]struct{})
 	for newOwnerID, assignedState := range newAssignments {
 		for shardID := range assignedState.AssignedShards {
-			previousOwnerID, previouslyAssigned := previousOwners[shardID]
+			previousOwnerID, previouslyAssigned := previousOwnersByShard[shardID]
 			if previouslyAssigned && previousOwnerID == newOwnerID {
 				continue
 			}
 
-			affectedExecutors[newOwnerID] = struct{}{}
+			executorsAffectedByAssignmentChange[newOwnerID] = struct{}{}
 			if previouslyAssigned {
-				affectedExecutors[previousOwnerID] = struct{}{}
+				executorsAffectedByAssignmentChange[previousOwnerID] = struct{}{}
 			}
 		}
 	}
-	return affectedExecutors
+	return executorsAffectedByAssignmentChange
 }
 
 func buildStatisticsUpdates(
-	affectedExecutors map[string]struct{},
-	previousOwners map[string]string,
+	executorsAffectedByAssignmentChange map[string]struct{},
+	previousOwnersByShard map[string]string,
 	newAssignments map[string]store.AssignedState,
 	previousStatistics map[string]store.ShardStatistics,
 	now time.Time,
 ) []store.ExecutorShardStatistics {
-	updates := make([]store.ExecutorShardStatistics, 0, len(affectedExecutors))
-	for executorID := range affectedExecutors {
+	updates := make([]store.ExecutorShardStatistics, 0, len(executorsAffectedByAssignmentChange))
+	for executorID := range executorsAffectedByAssignmentChange {
 		assignedState := newAssignments[executorID]
-		statistics := make(map[string]store.ShardStatistics, len(assignedState.AssignedShards))
+		statisticsByShard := make(map[string]store.ShardStatistics, len(assignedState.AssignedShards))
 		for shardID := range assignedState.AssignedShards {
-			previousOwnerID, previouslyAssigned := previousOwners[shardID]
+			previousOwnerID, previouslyAssigned := previousOwnersByShard[shardID]
 			shardStatistics, hasPreviousStatistics := previousStatistics[shardID]
 			sameOwner := previouslyAssigned && previousOwnerID == executorID
 
 			if sameOwner {
 				if hasPreviousStatistics {
-					statistics[shardID] = shardStatistics
+					statisticsByShard[shardID] = shardStatistics
 				}
 			} else {
 				// Preserve existing statistics and start a new cooldown when a shard moves.
@@ -75,12 +75,12 @@ func buildStatisticsUpdates(
 				} else {
 					shardStatistics = store.ShardStatistics{}
 				}
-				statistics[shardID] = shardStatistics
+				statisticsByShard[shardID] = shardStatistics
 			}
 		}
 		updates = append(updates, store.ExecutorShardStatistics{
 			ExecutorID: executorID,
-			Statistics: statistics,
+			Statistics: statisticsByShard,
 		})
 	}
 

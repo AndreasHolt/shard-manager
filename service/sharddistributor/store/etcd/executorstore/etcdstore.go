@@ -382,7 +382,7 @@ func (s *executorStoreImpl) hasExecutorStatusChanged(watchResp clientv3.WatchRes
 	return false
 }
 
-func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, request store.AssignShardsRequest, guard store.GuardFunc) (err error) {
+func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, request store.AssignShardsRequest, guard store.GuardFunc) error {
 	var ops []clientv3.Op
 	var opsElse []clientv3.Op
 	var comparisons []clientv3.Cmp
@@ -928,8 +928,8 @@ func (s *executorStoreImpl) RecordShardStatisticsBatch(ctx context.Context, name
 			continue
 		}
 
-		statistics := etcdtypes.FromShardStatisticsMap(update.Statistics)
-		payload, err := json.Marshal(statistics)
+		storedStatistics := etcdtypes.FromShardStatisticsMap(update.Statistics)
+		payload, err := json.Marshal(storedStatistics)
 		if err != nil {
 			multiError = errors.Join(multiError, fmt.Errorf("failed to marshal shard statistics for executor %s: %w", update.ExecutorID, err))
 			continue

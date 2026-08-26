@@ -1101,15 +1101,15 @@ func TestGetNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
 	mocks.store.EXPECT().GetShardOwner(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, store.ErrShardNotFound).AnyTimes()
 
-	newState, changedExecutors := processor.getNewAssignmentsState(namespaceState, currentAssignments, now)
+	newAssignments, executorsWithChangedAssignments := processor.getNewAssignmentsState(namespaceState, currentAssignments, now)
 
-	assert.Len(t, newState, 3)
-	assert.Equal(t, map[string]struct{}{"exec-2": {}, "exec-3": {}}, changedExecutors)
-	assert.Equal(t, oldTime, newState["exec-1"].LastUpdated)
-	assert.Equal(t, now, newState["exec-2"].LastUpdated)
-	assert.Equal(t, int64(10), newState["exec-1"].ModRevision)
-	assert.Equal(t, int64(20), newState["exec-2"].ModRevision)
-	assert.Equal(t, int64(0), newState["exec-3"].ModRevision)
+	assert.Len(t, newAssignments, 3)
+	assert.Equal(t, map[string]struct{}{"exec-2": {}, "exec-3": {}}, executorsWithChangedAssignments)
+	assert.Equal(t, oldTime, newAssignments["exec-1"].LastUpdated)
+	assert.Equal(t, now, newAssignments["exec-2"].LastUpdated)
+	assert.Equal(t, int64(10), newAssignments["exec-1"].ModRevision)
+	assert.Equal(t, int64(20), newAssignments["exec-2"].ModRevision)
+	assert.Equal(t, int64(0), newAssignments["exec-3"].ModRevision)
 }
 
 func TestEmitExecutorMetric(t *testing.T) {
