@@ -68,8 +68,8 @@ func buildStatisticsUpdates(
 					statistics[shardID] = shardStatistics
 				}
 			} else {
-				// A moved shard carries its existing load history and starts a new move cooldown.
-				// A newly assigned or previously unmeasured shard starts with zero statistics.
+				// Preserve existing statistics and start a new cooldown when a shard moves.
+				// First assignments and shards without previous statistics start empty.
 				if previouslyAssigned && hasPreviousStatistics {
 					shardStatistics.LastMoveTime = now
 				} else {

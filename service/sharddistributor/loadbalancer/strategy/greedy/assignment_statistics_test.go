@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
@@ -13,45 +12,62 @@ import (
 
 func TestPrepareAssignmentStatistics(t *testing.T) {
 	now := time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC)
+
+	sourceExecutorID := "source"
+	sourceShardID := "stay-source"
+	sourceShardStatistics := store.ShardStatistics{
+		SmoothedLoad:   3,
+		LastUpdateTime: now.Add(-time.Minute),
+	}
+
+	destinationExecutorID := "destination"
+	destinationShardID := "stay-destination"
+	destinationShardStatistics := store.ShardStatistics{
+		SmoothedLoad:   7,
+		LastUpdateTime: now.Add(-time.Minute),
+	}
+
+	movedShardID := "move"
+	movedShardStatistics := store.ShardStatistics{
+		SmoothedLoad:   12.5,
+		LastUpdateTime: now.Add(-time.Minute),
+		LastMoveTime:   now.Add(-time.Hour),
+	}
+	expectedMovedShardStatistics := movedShardStatistics
+	expectedMovedShardStatistics.LastMoveTime = now
+
+	newShardID := "new"
+
+	// The assignments describe a planned shard move and a first assignment.
 	previousStatistics := map[string]store.ShardStatistics{
-		"move": {
-			SmoothedLoad:   12.5,
-			LastUpdateTime: now.Add(-time.Minute),
-			LastMoveTime:   now.Add(-time.Hour),
-		},
-		"stay-source": {
-			SmoothedLoad:   3,
-			LastUpdateTime: now.Add(-time.Minute),
-		},
-		"stay-destination": {
-			SmoothedLoad:   7,
-			LastUpdateTime: now.Add(-time.Minute),
-		},
+		movedShardID:       movedShardStatistics,
+		sourceShardID:      sourceShardStatistics,
+		destinationShardID: destinationShardStatistics,
 	}
 	previousAssignments := map[string]store.AssignedState{
-		"source": {
+		sourceExecutorID: {
 			AssignedShards: map[string]*types.ShardAssignment{
-				"move":        {Status: types.AssignmentStatusREADY},
-				"stay-source": {Status: types.AssignmentStatusREADY},
+				movedShardID:  {Status: types.AssignmentStatusREADY},
+				sourceShardID: {Status: types.AssignmentStatusREADY},
 			},
 		},
-		"destination": {
+		destinationExecutorID: {
 			AssignedShards: map[string]*types.ShardAssignment{
-				"stay-destination": {Status: types.AssignmentStatusREADY},
+				destinationShardID: {Status: types.AssignmentStatusREADY},
 			},
 		},
 	}
 	newAssignments := map[string]store.AssignedState{
-		"source": {
+		sourceExecutorID: {
 			AssignedShards: map[string]*types.ShardAssignment{
-				"stay-source": {Status: types.AssignmentStatusREADY},
+				sourceShardID: {Status: types.AssignmentStatusREADY},
 			},
 		},
-		"destination": {
+		destinationExecutorID: {
 			AssignedShards: map[string]*types.ShardAssignment{
-				"move":             {Status: types.AssignmentStatusREADY},
-				"stay-destination": {Status: types.AssignmentStatusREADY},
-				"new":              {Status: types.AssignmentStatusREADY},
+				movedShardID:       {Status: types.AssignmentStatusREADY},
+				destinationShardID: {Status: types.AssignmentStatusREADY},
+				newShardID:         {Status: types.AssignmentStatusREADY},
 			},
 		},
 	}
@@ -68,18 +84,17 @@ func TestPrepareAssignmentStatistics(t *testing.T) {
 		updatesByExecutor[update.ExecutorID] = update.Statistics
 	}
 
-	require.Len(t, updatesByExecutor, 2)
-	assert.Equal(t, map[string]store.ShardStatistics{
-		"stay-source": previousStatistics["stay-source"],
-	}, updatesByExecutor["source"])
-
-	destinationStatistics := updatesByExecutor["destination"]
-	require.Len(t, destinationStatistics, 3)
-	assert.Equal(t, previousStatistics["stay-destination"], destinationStatistics["stay-destination"])
-	assert.Equal(t, store.ShardStatistics{}, destinationStatistics["new"])
-
-	movedStatistics := destinationStatistics["move"]
-	assert.Equal(t, previousStatistics["move"].SmoothedLoad, movedStatistics.SmoothedLoad)
-	assert.Equal(t, previousStatistics["move"].LastUpdateTime, movedStatistics.LastUpdateTime)
-	assert.Equal(t, now, movedStatistics.LastMoveTime)
+	// The moved shard carries its statistics to the destination. Existing shards
+	// keep their statistics, while the newly assigned shard starts empty.
+	expectedUpdates := map[string]map[string]store.ShardStatistics{
+		sourceExecutorID: {
+			sourceShardID: sourceShardStatistics,
+		},
+		destinationExecutorID: {
+			movedShardID:       expectedMovedShardStatistics,
+			destinationShardID: destinationShardStatistics,
+			newShardID:         {},
+		},
+	}
+	assert.Equal(t, expectedUpdates, updatesByExecutor)
 }
