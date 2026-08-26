@@ -54,7 +54,6 @@ type NamespaceState struct {
 	Executors map[string]HeartbeatState
 
 	// ShardStats holds the statistics of all shards in the namespace.
-	// Only loaded for namespace which types.LoadBalancingMode is types.LoadBalancingModeGREEDY
 	// Key: ShardID
 	ShardStats map[string]ShardStatistics
 
@@ -85,8 +84,7 @@ type ShardStatistics struct {
 	LastMoveTime time.Time
 }
 
-// ExecutorShardStatistics contains the complete shard statistics map for one
-// executor.
+// ExecutorShardStatistics contains the complete shard statistics map for one executor.
 type ExecutorShardStatistics struct {
 	ExecutorID string
 	Statistics map[string]ShardStatistics
