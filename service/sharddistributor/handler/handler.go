@@ -326,7 +326,7 @@ func (h *handlerImpl) ListNamespaces(_ context.Context, _ *types.ListNamespacesR
 func (h *handlerImpl) sendWatchResponse(namespace string, server WatchNamespaceStateServer) error {
 	executorState, e := h.storage.GetShardAssignments(namespace)
 	if e != nil {
-		return &types.InternalServiceError{Message: fmt.Sprintf("failed to get executor state: %v", e)}
+		return &types.InternalServiceError{Message: fmt.Sprintf("failed to get shard assignments: %v", e)}
 	}
 	response := &types.WatchNamespaceStateResponse{
 		Executors: make([]*types.ExecutorShardAssignment, 0, len(executorState)),
