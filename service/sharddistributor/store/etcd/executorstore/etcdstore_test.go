@@ -3,6 +3,7 @@ package executorstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"testing"
@@ -166,8 +167,8 @@ func TestRecordShardStatisticsWritesPreparedStatistics(t *testing.T) {
 
 	executorID := "executor-shard-stats"
 	shardID := "shard-with-load"
+	preparedSmoothedLoad := 45.6
 	now := time.Now().UTC()
-	const preparedSmoothedLoad = 45.6
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
@@ -200,10 +201,8 @@ func TestRecordShardStatisticsReturnsConflictForStaleAssignment(t *testing.T) {
 
 	executorID := "executor-stale-snapshot"
 	shardID := "shard-with-stats"
-	const (
-		initialSmoothedLoad = 10.0
-		staleSmoothedLoad   = 1000.0
-	)
+	initialSmoothedLoad := 10.0
+	staleSmoothedLoad := 1000.0
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
@@ -849,13 +848,11 @@ func TestTransferShardStatistics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	const (
-		source      = "transfer-source"
-		destination = "transfer-destination"
-		movedShard  = "transfer-moved"
-		sourceShard = "transfer-source-stay"
-		destShard   = "transfer-destination-stay"
-	)
+	source := "transfer-source"
+	destination := "transfer-destination"
+	movedShard := "transfer-moved"
+	sourceShard := "transfer-source-stay"
+	destShard := "transfer-destination-stay"
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, source, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, destination, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
@@ -875,18 +872,36 @@ func TestTransferShardStatistics(t *testing.T) {
 		}},
 	}, store.NopGuard()))
 
-	_, sourceAssigned, sourceStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, source)
+	sourceExecutorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, source)
 	require.NoError(t, err)
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, source, map[string]*types.ShardStatusReport{
-		movedShard:  {ShardLoad: 12.5},
-		sourceShard: {ShardLoad: 3},
-	}, sourceAssigned, sourceStats))
+	require.NotNil(t, sourceExecutorState.Assignment)
+	sourceStats := map[string]store.ShardStatistics{
+		movedShard:  {SmoothedLoad: 12.5},
+		sourceShard: {SmoothedLoad: 3},
+	}
+	err = executorStore.RecordShardStatistics(
+		ctx,
+		tc.Namespace,
+		source,
+		sourceExecutorState.Assignment.ModRevision,
+		sourceStats,
+	)
+	require.NoError(t, err)
 
-	_, destinationAssigned, destinationStats, err := executorStore.GetHeartbeat(ctx, tc.Namespace, destination)
+	destinationExecutorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, destination)
 	require.NoError(t, err)
-	require.NoError(t, executorStore.RecordShardStatistics(ctx, tc.Namespace, destination, map[string]*types.ShardStatusReport{
-		destShard: {ShardLoad: 7},
-	}, destinationAssigned, destinationStats))
+	require.NotNil(t, destinationExecutorState.Assignment)
+	destinationStats := map[string]store.ShardStatistics{
+		destShard: {SmoothedLoad: 7},
+	}
+	err = executorStore.RecordShardStatistics(
+		ctx,
+		tc.Namespace,
+		destination,
+		destinationExecutorState.Assignment.ModRevision,
+		destinationStats,
+	)
+	require.NoError(t, err)
 
 	before, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
@@ -925,12 +940,12 @@ func TestTransferShardStatistics(t *testing.T) {
 	assert.Contains(t, after.ShardStats, sourceShard)
 	assert.Contains(t, after.ShardStats, destShard)
 
-	_, _, sourceStats, err = executorStore.GetHeartbeat(ctx, tc.Namespace, source)
+	sourceExecutorState, err = executorStore.GetExecutorState(ctx, tc.Namespace, source)
 	require.NoError(t, err)
-	assert.NotContains(t, sourceStats, movedShard)
-	_, _, destinationStats, err = executorStore.GetHeartbeat(ctx, tc.Namespace, destination)
+	assert.NotContains(t, sourceExecutorState.Statistics, movedShard)
+	destinationExecutorState, err = executorStore.GetExecutorState(ctx, tc.Namespace, destination)
 	require.NoError(t, err)
-	assert.Contains(t, destinationStats, movedShard)
+	assert.Contains(t, destinationExecutorState.Statistics, movedShard)
 }
 
 // TestGetShardStatisticsForMissingShard verifies GetState does not report statistics for unknown shards.
@@ -1409,6 +1424,47 @@ func TestDrainShardsLifecycle(t *testing.T) {
 	drained, err = executorStore.GetDrainedShards(ctx, tc.Namespace)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"shard-C"}, drained)
+}
+
+func TestGetShardOwnerRefusesDrainedShards(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	executorID := "executor-drain-read-path"
+	shardID := "shard-drain-read-path"
+
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{shardID}))
+
+	require.Eventually(t, func() bool {
+		_, err := executorStore.GetShardOwner(ctx, tc.Namespace, shardID)
+		return errors.Is(err, store.ErrShardDrained)
+	}, 5*time.Second, 50*time.Millisecond)
+
+	_, err := executorStore.UndrainShards(ctx, tc.Namespace, []string{shardID})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		owner, err := executorStore.GetShardOwner(ctx, tc.Namespace, shardID)
+		return err == nil && owner.ExecutorID == executorID
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestGetShardOwnerReportsDrainedForUnassignedShard(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{"never-assigned"}))
+
+	require.Eventually(t, func() bool {
+		_, err := executorStore.GetShardOwner(ctx, tc.Namespace, "never-assigned")
+		return errors.Is(err, store.ErrShardDrained)
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 // UndrainShards reports only the shards it actually removed. A shard that was never

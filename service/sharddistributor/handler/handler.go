@@ -106,6 +106,13 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 	}
 
 	shardOwner, err := h.storage.GetShardOwner(ctx, request.Namespace, request.ShardKey)
+
+	if errors.Is(err, store.ErrShardDrained) {
+		return nil, &types.ShardDrainedError{
+			Namespace: request.Namespace,
+			ShardKey:  request.ShardKey,
+		}
+	}
 	if errors.Is(err, store.ErrShardNotFound) {
 		if h.shardDistributionCfg.Namespaces[namespaceIdx].Type == config.NamespaceTypeEphemeral {
 			return h.assigner.GetOrAssign(ctx, request)
@@ -141,6 +148,12 @@ func (h *handlerImpl) InspectShard(ctx context.Context, request *types.GetShardO
 	}
 
 	shardOwner, err := h.storage.GetShardOwner(ctx, request.Namespace, request.ShardKey)
+	if errors.Is(err, store.ErrShardDrained) {
+		return nil, &types.ShardDrainedError{
+			Namespace: request.Namespace,
+			ShardKey:  request.ShardKey,
+		}
+	}
 	if errors.Is(err, store.ErrShardNotFound) {
 		return nil, &types.ShardNotFoundError{
 			Namespace: request.Namespace,
@@ -310,21 +323,47 @@ func (h *handlerImpl) ListNamespaces(_ context.Context, _ *types.ListNamespacesR
 	return &types.ListNamespacesResponse{Namespaces: namespaces}, nil
 }
 
+func (h *handlerImpl) sendWatchResponse(namespace string, server WatchNamespaceStateServer) error {
+	executorState, e := h.storage.GetShardAssignments(namespace)
+	if e != nil {
+		return &types.InternalServiceError{Message: fmt.Sprintf("failed to get shard assignments: %v", e)}
+	}
+	response := &types.WatchNamespaceStateResponse{
+		Executors: make([]*types.ExecutorShardAssignment, 0, len(executorState)),
+	}
+	for ex, shardIDs := range executorState {
+		response.Executors = append(response.Executors, &types.ExecutorShardAssignment{
+			ExecutorID:     ex.ExecutorID,
+			AssignedShards: WrapShards(shardIDs),
+			Metadata:       ex.Metadata,
+		})
+	}
+
+	err := server.Send(response)
+	if err != nil {
+		return fmt.Errorf("send response: %w", err)
+	}
+	return nil
+}
+
 func (h *handlerImpl) WatchNamespaceState(request *types.WatchNamespaceStateRequest, server WatchNamespaceStateServer) error {
 	h.startWG.Wait()
 
 	var stopDone <-chan struct{}
-	subscribeCtx := server.Context()
 	if h.stopCtx != nil {
 		stopDone = h.stopCtx.Done()
-		subscribeCtx = h.stopCtx
 	}
 
 	// Subscribe to state changes from storage
-	assignmentChangesChan, unSubscribe, err := h.storage.SubscribeToAssignmentChanges(subscribeCtx, request.Namespace)
-	defer unSubscribe()
+	notifyCh, unSubscribe, err := h.storage.SubscribeToAssignmentChanges(server.Context(), request.Namespace)
 	if err != nil {
 		return &types.InternalServiceError{Message: fmt.Sprintf("failed to subscribe to namespace state: %v", err)}
+	}
+	defer unSubscribe()
+
+	// Send the initial state
+	if err = h.sendWatchResponse(request.Namespace, server); err != nil {
+		return err
 	}
 
 	// Stream subsequent updates
@@ -334,24 +373,12 @@ func (h *handlerImpl) WatchNamespaceState(request *types.WatchNamespaceStateRequ
 			return server.Context().Err()
 		case <-stopDone:
 			return h.stopCtx.Err()
-		case assignmentChanges, ok := <-assignmentChangesChan:
+		case _, ok := <-notifyCh:
 			if !ok {
 				return fmt.Errorf("unexpected close of updates channel")
 			}
-			response := &types.WatchNamespaceStateResponse{
-				Executors: make([]*types.ExecutorShardAssignment, 0, len(assignmentChanges)),
-			}
-			for executor, shardIDs := range assignmentChanges {
-				response.Executors = append(response.Executors, &types.ExecutorShardAssignment{
-					ExecutorID:     executor.ExecutorID,
-					AssignedShards: WrapShards(shardIDs),
-					Metadata:       executor.Metadata,
-				})
-			}
-
-			err = server.Send(response)
-			if err != nil {
-				return fmt.Errorf("send response: %w", err)
+			if err = h.sendWatchResponse(request.Namespace, server); err != nil {
+				return err
 			}
 		}
 	}

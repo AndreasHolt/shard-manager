@@ -102,46 +102,37 @@ func TestNamespaceShardToExecutor_Subscribe(t *testing.T) {
 	err = namespaceShardToExecutor.refresh(context.Background())
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	subCh, unSub := namespaceShardToExecutor.Subscribe(ctx)
+	notifyCh, unSub := namespaceShardToExecutor.Subscribe()
 	defer unSub()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	assert.Len(t, namespaceShardToExecutor.GetShardAssignments(), 1)
+	verifyExecutorInState(t, namespaceShardToExecutor.GetShardAssignments(), "executor-1", []string{"shard-1"}, map[string]string{
+		"hostname": "executor-1-host",
+		"version":  "v1.0.0",
+	})
 
-	// start listener
-	go func() {
-		defer wg.Done()
-		// Check that we get the initial state
-		state := <-subCh
-		assert.Len(t, state, 1)
-		verifyExecutorInState(t, state, "executor-1", []string{"shard-1"}, map[string]string{
-			"hostname": "executor-1-host",
-			"version":  "v1.0.0",
-		})
-
-		// Check that we get the updated state
-		state = <-subCh
-		assert.Len(t, state, 2)
-		verifyExecutorInState(t, state, "executor-1", []string{"shard-1"}, map[string]string{
-			"hostname": "executor-1-host",
-			"version":  "v1.0.0",
-		})
-		verifyExecutorInState(t, state, "executor-2", []string{"shard-2"}, map[string]string{
-			"hostname": "executor-2-host",
-			"region":   "us-west",
-		})
-	}()
-	time.Sleep(10 * time.Millisecond)
-
-	// Add executor-2 with shard-2 to trigger new subscription update
+	// Modify executors to trigger a notification
 	setupExecutorWithShards(t, testCluster, "executor-2", []string{"shard-2"}, map[string]string{
 		"hostname": "executor-2-host",
 		"region":   "us-west",
 	})
 
-	wg.Wait()
+	// await for notification
+	select {
+	case <-notifyCh:
+	case <-time.After(time.Second):
+		require.Fail(t, "expected to receive a notification")
+	}
+
+	assert.Len(t, namespaceShardToExecutor.GetShardAssignments(), 2)
+	verifyExecutorInState(t, namespaceShardToExecutor.GetShardAssignments(), "executor-1", []string{"shard-1"}, map[string]string{
+		"hostname": "executor-1-host",
+		"version":  "v1.0.0",
+	})
+	verifyExecutorInState(t, namespaceShardToExecutor.GetShardAssignments(), "executor-2", []string{"shard-2"}, map[string]string{
+		"hostname": "executor-2-host",
+		"region":   "us-west",
+	})
 }
 
 func TestNamespaceShardToExecutor_watch_watchChanErrors(t *testing.T) {
@@ -466,7 +457,7 @@ func TestNamespaceShardToExecutor_replaceNamespaceState_skipsStaleRevision(t *te
 		map[string]struct{}{"shard-1": {}},
 	)
 
-	got := e.getExecutorState()
+	got := e.GetShardAssignments()
 	require.Len(t, got, 1)
 	assertShardDrained(t, e, "shard-1", true)
 
@@ -479,7 +470,7 @@ func TestNamespaceShardToExecutor_replaceNamespaceState_skipsStaleRevision(t *te
 		map[string]struct{}{"shard-2": {}},
 	)
 
-	got = e.getExecutorState()
+	got = e.GetShardAssignments()
 	require.Len(t, got, 1)
 	for owner := range got {
 		assert.Equal(t, "exec-a", owner.ExecutorID)
@@ -496,7 +487,7 @@ func TestNamespaceShardToExecutor_replaceNamespaceState_skipsStaleRevision(t *te
 		map[string]struct{}{"shard-2": {}},
 	)
 
-	got = e.getExecutorState()
+	got = e.GetShardAssignments()
 	require.Len(t, got, 1)
 	for owner := range got {
 		assert.Equal(t, "exec-b", owner.ExecutorID)
@@ -720,9 +711,8 @@ func TestNamespaceShardToExecutor_Refresh_PublishReflectsLatestStateNotStaleSnap
 	defer close(tc.stopCh)
 
 	ownerA := &store.ShardOwner{ExecutorID: "exec-a", Metadata: map[string]string{}}
-	ownerB := &store.ShardOwner{ExecutorID: "exec-b", Metadata: map[string]string{}}
 
-	subCh, unsub := tc.e.pubSub.subscribe(tc.e.getExecutorState)
+	subCh, unsub := tc.e.pubSub.subscribe()
 	defer unsub()
 
 	// Apply the older state.
@@ -736,19 +726,21 @@ func TestNamespaceShardToExecutor_Refresh_PublishReflectsLatestStateNotStaleSnap
 
 	// Hold the pubsub lock so the publish below queues behind it, simulating
 	// a slower refresh whose publish call loses the race for the lock.
-	tc.e.pubSub.mu.Lock()
+	tc.e.pubSub.Lock()
 
 	publishDone := make(chan struct{})
 	go func() {
-		tc.e.pubSub.publish(tc.e.getExecutorState)
+		tc.e.pubSub.notifySubscribers() // this one should be enqueued since the lock is holded
 		close(publishDone)
 	}()
 
 	// Give the goroutine time to block on the lock before the newer state is applied.
 	time.Sleep(20 * time.Millisecond)
 
-	// A concurrent, newer refresh applies its state while the publish above is
-	// still queued.
+	// A concurrent, newer refresh applies its state while the notification above is
+	// still enqueued.
+	ownerB := &store.ShardOwner{ExecutorID: "exec-b", Metadata: map[string]string{}}
+
 	tc.e.replaceNamespaceState(10,
 		map[string]*store.ShardOwner{"shard-b": ownerB},
 		map[*store.ShardOwner][]string{ownerB: {"shard-b"}},
@@ -757,14 +749,16 @@ func TestNamespaceShardToExecutor_Refresh_PublishReflectsLatestStateNotStaleSnap
 		map[string]struct{}{"shard-b": {}},
 	)
 
-	tc.e.pubSub.mu.Unlock()
+	tc.e.pubSub.Unlock()
 	<-publishDone
 
-	got := <-subCh
-	require.Len(t, got, 1)
-	for owner := range got {
-		assert.Equal(t, "exec-b", owner.ExecutorID, "queued publish must reflect the latest cache state, not a snapshot taken before it acquired the lock")
+	select {
+	case <-subCh:
+	case <-time.After(time.Second):
+		require.Fail(t, "timed out waiting for notification")
 	}
+
+	// we don't check the state as it is definitely applied, only notification
 }
 
 func TestNamespaceShardToExecutor_namespaceRefreshLoop_watchError(t *testing.T) {

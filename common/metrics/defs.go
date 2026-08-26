@@ -3075,6 +3075,7 @@ const (
 	ShardDistributorMaxExecutorsPerShard
 
 	ShardDistributorStoreExecutorNotFound
+	ShardDistributorStoreShardStatisticsSkipped
 	ShardDistributorStoreFailuresPerNamespace
 	ShardDistributorStoreRequestsPerNamespace
 	ShardDistributorStoreLatencyHistogramPerNamespace
@@ -3924,6 +3925,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorMaxExecutorsPerShard:       {metricName: "shard_distributor_max_executors_per_shard", metricType: Gauge},
 
 		ShardDistributorStoreExecutorNotFound:             {metricName: "shard_distributor_store_executor_not_found", metricType: Counter},
+		ShardDistributorStoreShardStatisticsSkipped:       {metricName: "shard_distributor_store_shard_statistics_skipped", metricType: Counter},
 		ShardDistributorStoreFailuresPerNamespace:         {metricName: "shard_distributor_store_failures_per_namespace", metricType: Counter},
 		ShardDistributorStoreRequestsPerNamespace:         {metricName: "shard_distributor_store_requests_per_namespace", metricType: Counter},
 		ShardDistributorStoreLatencyHistogramPerNamespace: {metricName: "shard_distributor_store_latency_histogram_per_namespace", metricType: Histogram, buckets: ShardDistributorExecutorStoreLatencyBuckets},

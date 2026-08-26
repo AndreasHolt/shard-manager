@@ -875,6 +875,13 @@ func TestNewHandoverStats(t *testing.T) {
 			expectShardStats: nil,
 		},
 		{
+			name:             "ErrShardDrained -> stat without handover",
+			getOwner:         nil,
+			getOwnerErr:      store.ErrShardDrained,
+			executors:        map[string]store.HeartbeatState{},
+			expectShardStats: nil,
+		},
+		{
 			name:        "same executor as previous -> nil",
 			getOwner:    &store.ShardOwner{ExecutorID: newExecutorID},
 			getOwnerErr: nil,
@@ -952,6 +959,7 @@ func TestNewHandoverStats(t *testing.T) {
 		})
 	}
 }
+
 func TestAddHandoverStatsToExecutorAssignedState(t *testing.T) {
 
 	now := time.Now().UTC()
