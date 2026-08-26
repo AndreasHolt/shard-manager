@@ -98,8 +98,9 @@ type Store interface {
 	GetExecutor(ctx context.Context, namespace string, executorID string) (*ShardOwner, error)
 	GetShardAssignments(namespace string) (map[*ShardOwner][]string, error)
 
-	GetHeartbeat(ctx context.Context, namespace string, executorID string) (*HeartbeatState, *AssignedState, error)
+	GetExecutorState(ctx context.Context, namespace string, executorID string) (ExecutorState, error)
 	RecordHeartbeat(ctx context.Context, namespace, executorID string, state HeartbeatState) error
+	RecordShardStatistics(ctx context.Context, namespace, executorID string, assignmentModRevision int64, statistics map[string]ShardStatistics) error
 
 	DeleteShardStats(ctx context.Context, namespace string, shardIDs []string, guard GuardFunc) error
 
