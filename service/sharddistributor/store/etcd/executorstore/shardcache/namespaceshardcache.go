@@ -33,8 +33,8 @@ const (
 	// triggered full refreshes.
 	refreshSingleFlightKey = "refresh"
 
-	// refreshOperationTimeout caps how long a singleflighted refresh / stats
-	// fetch can keep the singleflight key occupied. The etcd client config
+	// refreshOperationTimeout caps how long a singleflighted refresh can keep
+	// the singleflight key occupied. The etcd client config
 	// only sets DialTimeout, so without this bound a hung Get would block
 	// every joiner indefinitely (until stopCh closes).
 	refreshOperationTimeout = 5 * time.Second
@@ -68,24 +68,9 @@ type namespaceShardToExecutor struct {
 	// simultaneously miss the cache, only one of them performs the etcd read;
 	// the rest wait on the shared result.
 	refreshSF singleflight.Group
-	// statsSF deduplicates concurrent per-executor statistics cache misses.
-	statsSF singleflight.Group
-	// refreshTimeout bounds an in-flight refresh / stats fetch; defaults to
+	// refreshTimeout bounds an in-flight refresh; defaults to
 	// refreshOperationTimeout.
 	refreshTimeout time.Duration
-
-	executorStatistics *namespaceExecutorStatistics
-}
-
-type namespaceExecutorStatistics struct {
-	sync.RWMutex
-	stats map[string]map[string]etcdtypes.ShardStatistics // executorID -> shardID -> ShardStatistics
-}
-
-func newNamespaceExecutorStatistics() *namespaceExecutorStatistics {
-	return &namespaceExecutorStatistics{
-		stats: make(map[string]map[string]etcdtypes.ShardStatistics),
-	}
 }
 
 func newNamespaceShardToExecutor(etcdPrefix, namespace string, client etcdclient.Client, stopCh chan struct{}, logger log.Logger, timeSource clock.TimeSource, metricsClient metrics.Client) (*namespaceShardToExecutor, error) {
@@ -105,7 +90,6 @@ func newNamespaceShardToExecutor(etcdPrefix, namespace string, client etcdclient
 		client:              client,
 		timeSource:          timeSource,
 		pubSub:              newExecutorStatePubSub(logger, namespace),
-		executorStatistics:  newNamespaceExecutorStatistics(),
 		metricsClient:       metricsClient,
 		refreshTimeout:      refreshOperationTimeout,
 	}, nil
@@ -179,80 +163,6 @@ func (n *namespaceShardToExecutor) GetExecutorModRevisionCmp() ([]clientv3.Cmp, 
 	return comparisons, nil
 }
 
-func (n *namespaceShardToExecutor) GetExecutorStatistics(ctx context.Context, executorID string) (map[string]etcdtypes.ShardStatistics, error) {
-	if stats, found := n.getStats(executorID); found {
-		return stats, nil
-	}
-
-	if err := n.populateExecutorStatisticsCacheOnMiss(ctx, executorID); err != nil {
-		return nil, err
-	}
-
-	// Refreshing cache after cache miss should allow the statistics to be found
-	if stats, found := n.getStats(executorID); found {
-		return stats, nil
-	}
-
-	return nil, fmt.Errorf("executor statistics not found after refresh: %w", store.ErrExecutorNotFound)
-}
-
-func (n *namespaceShardToExecutor) getStats(executorID string) (map[string]etcdtypes.ShardStatistics, bool) {
-	n.executorStatistics.RLock()
-	defer n.executorStatistics.RUnlock()
-
-	stats, ok := n.executorStatistics.stats[executorID]
-	if ok {
-		return maps.Clone(stats), true
-	}
-
-	return nil, false
-}
-
-// populateExecutorStatisticsCacheOnMiss fetches executor statistics from etcd
-// and caches them, deduplicating concurrent misses for the same executor.
-func (n *namespaceShardToExecutor) populateExecutorStatisticsCacheOnMiss(ctx context.Context, executorID string) error {
-	ch := n.statsSF.DoChan(executorID, func() (interface{}, error) {
-		fetchCtx, cancel := context.WithTimeout(context.Background(), n.refreshTimeout)
-		defer cancel()
-		return nil, n.fetchAndCacheExecutorStatistics(fetchCtx, executorID)
-	})
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case res := <-ch:
-		return res.Err
-	}
-}
-
-func (n *namespaceShardToExecutor) fetchAndCacheExecutorStatistics(ctx context.Context, executorID string) error {
-	statsKey := etcdkeys.BuildExecutorKey(n.etcdPrefix, n.namespace, executorID, etcdkeys.ExecutorShardStatisticsKey)
-	resp, err := n.client.Get(ctx, statsKey)
-	if err != nil {
-		return fmt.Errorf("get executor shard statistics: %w", err)
-	}
-
-	n.executorStatistics.Lock()
-	defer n.executorStatistics.Unlock()
-
-	// The watch loop may have populated the cache while reading etcd.
-	// In that case, do not overwrite the newer cached value.
-	if _, ok := n.executorStatistics.stats[executorID]; ok {
-		return nil
-	}
-
-	if len(resp.Kvs) > 0 {
-		stats := make(map[string]etcdtypes.ShardStatistics)
-		if err := common.DecompressAndUnmarshal(resp.Kvs[0].Value, &stats); err != nil {
-			return fmt.Errorf("parse executor shard statistics: %w", err)
-		}
-		n.executorStatistics.stats[executorID] = stats
-	} else {
-		return store.ErrExecutorNotFound
-	}
-	return nil
-}
-
 func (n *namespaceShardToExecutor) Subscribe() (<-chan struct{}, func()) {
 	return n.pubSub.subscribe()
 }
@@ -260,8 +170,7 @@ func (n *namespaceShardToExecutor) Subscribe() (<-chan struct{}, func()) {
 func (n *namespaceShardToExecutor) namespaceRefreshLoop() {
 	triggerCh, watcherDone := n.runWatchLoop()
 
-	// The watcher applies statistics updates straight to the cache, so returning here
-	// would release the caller's WaitGroup while those writes are still possible.
+	// Wait for the watcher owned by this loop before releasing the caller's WaitGroup.
 	defer func() { <-watcherDone }()
 
 	for {
@@ -374,9 +283,7 @@ func (n *namespaceShardToExecutor) watch(triggerCh chan<- struct{}) error {
 }
 
 // needsRefresh checks whether a watch response over the namespace prefix requires a
-// cache refresh. Both checks run before the result is combined, because
-// hasExecutorStateChanged also applies statistics events as a side effect and
-// short-circuiting on a drained-shard change would drop them.
+// cache refresh.
 func (n *namespaceShardToExecutor) needsRefresh(watchResp clientv3.WatchResponse) bool {
 	executorStateChanged := n.hasExecutorStateChanged(watchResp)
 	drainedShardsChanged := n.hasDrainedShardsChanged(watchResp)
@@ -415,7 +322,7 @@ func (n *namespaceShardToExecutor) hasExecutorStateChanged(watchResp clientv3.Wa
 			continue
 		}
 
-		executorID, keyType, keyErr := etcdkeys.ParseExecutorKey(n.etcdPrefix, n.namespace, string(event.Kv.Key))
+		_, keyType, keyErr := etcdkeys.ParseExecutorKey(n.etcdPrefix, n.namespace, string(event.Kv.Key))
 		if keyErr != nil {
 			n.logger.Warn("Received watch event with unrecognized key format", tag.Value(keyErr))
 			continue
@@ -427,8 +334,6 @@ func (n *namespaceShardToExecutor) hasExecutorStateChanged(watchResp clientv3.Wa
 		}
 
 		switch keyType {
-		case etcdkeys.ExecutorShardStatisticsKey:
-			n.handleExecutorStatisticsEvent(executorID, *event)
 		case etcdkeys.ExecutorAssignedStateKey, etcdkeys.ExecutorMetadataKey:
 			needsRefresh = true
 		}
@@ -479,9 +384,8 @@ func (n *namespaceShardToExecutor) refreshNamespaceState(ctx context.Context) (b
 	return updated, nil
 }
 
-// partitionNamespaceKVs splits a namespace range read into the executor keys, which need
-// full parsing, and the set of drained shard IDs. Keys belonging to any other sibling
-// keyspace, leader election being the only one today, are ignored.
+// partitionNamespaceKVs splits a namespace range read into the executor keys tracked by
+// this cache and the set of drained shard IDs. Other namespace keys are ignored.
 func (n *namespaceShardToExecutor) partitionNamespaceKVs(kvs []*mvccpb.KeyValue) ([]*mvccpb.KeyValue, map[string]struct{}) {
 	executorKVs := make([]*mvccpb.KeyValue, 0, len(kvs))
 	drainedShards := make(map[string]struct{})
@@ -491,6 +395,10 @@ func (n *namespaceShardToExecutor) partitionNamespaceKVs(kvs []*mvccpb.KeyValue)
 
 		switch {
 		case strings.HasPrefix(key, n.executorsPrefix):
+			_, keyType, err := etcdkeys.ParseExecutorKey(n.etcdPrefix, n.namespace, key)
+			if err == nil && keyType == etcdkeys.ExecutorShardStatisticsKey {
+				continue
+			}
 			executorKVs = append(executorKVs, kv)
 		case strings.HasPrefix(key, n.drainedShardsPrefix):
 			shardID, err := etcdkeys.ParseDrainedShardKey(n.etcdPrefix, n.namespace, key)
@@ -511,8 +419,6 @@ func (n *namespaceShardToExecutor) applyNamespaceData(storeRevision int64, execu
 	executorState := make(map[*store.ShardOwner][]string)
 	executorRevision := make(map[string]int64)
 	shardOwners := make(map[string]*store.ShardOwner)
-	executorStatistics := make(map[string]map[string]etcdtypes.ShardStatistics)
-
 	for executorID, executorData := range executors {
 		shardOwner := getOrCreateShardOwner(shardOwners, executorID)
 		if executorData.AssignedState != nil {
@@ -526,13 +432,9 @@ func (n *namespaceShardToExecutor) applyNamespaceData(storeRevision int64, execu
 		}
 
 		maps.Copy(shardOwner.Metadata, executorData.Metadata)
-
-		executorStatistics[executorID] = maps.Clone(executorData.Statistics)
 	}
 
-	updated := n.replaceNamespaceState(storeRevision, shardToExecutor, executorState, executorRevision, shardOwners, drainedShards)
-	n.executorStatistics.replaceStatistics(executorStatistics)
-	return updated
+	return n.replaceNamespaceState(storeRevision, shardToExecutor, executorState, executorRevision, shardOwners, drainedShards)
 }
 
 func (n *namespaceShardToExecutor) replaceNamespaceState(
@@ -561,46 +463,6 @@ func (n *namespaceShardToExecutor) replaceNamespaceState(
 	n.shardOwners = shardOwners
 	n.drainedShards = drainedShards
 	return true
-}
-
-// handleExecutorStatisticsEvent processes incoming watch events for executor shard statistics.
-// It updates the in-memory statistics map directly from the event without triggering a full refresh.
-func (n *namespaceShardToExecutor) handleExecutorStatisticsEvent(executorID string, event clientv3.Event) {
-	if event.Type == clientv3.EventTypeDelete {
-		n.executorStatistics.deleteStatistics(executorID)
-		return
-	}
-
-	stats := make(map[string]etcdtypes.ShardStatistics)
-	if err := common.DecompressAndUnmarshal(event.Kv.Value, &stats); err != nil {
-		n.logger.Error(
-			"failed to parse executor statistics from watch event",
-			tag.ShardNamespace(n.namespace),
-			tag.ShardExecutor(executorID),
-			tag.Error(err),
-		)
-		return
-	}
-
-	n.executorStatistics.assignStatistics(executorID, stats)
-}
-
-func (n *namespaceExecutorStatistics) deleteStatistics(executorID string) {
-	n.Lock()
-	defer n.Unlock()
-	delete(n.stats, executorID)
-}
-
-func (n *namespaceExecutorStatistics) assignStatistics(executorID string, stats map[string]etcdtypes.ShardStatistics) {
-	n.Lock()
-	defer n.Unlock()
-	n.stats[executorID] = maps.Clone(stats)
-}
-
-func (n *namespaceExecutorStatistics) replaceStatistics(stats map[string]map[string]etcdtypes.ShardStatistics) {
-	n.Lock()
-	defer n.Unlock()
-	n.stats = stats
 }
 
 // getOrCreateShardOwner retrieves an existing ShardOwner from the map or creates a new one if it doesn't exist

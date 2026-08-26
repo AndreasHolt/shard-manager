@@ -25,7 +25,6 @@ import (
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/etcdclient"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/etcdkeys"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/etcdtypes"
-	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/executorstore/common"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/testhelper"
 )
 
@@ -607,12 +606,14 @@ func TestNamespaceShardToExecutor_partitionNamespaceKVs(t *testing.T) {
 	defer close(tc.stopCh)
 
 	assignedStateKey := etcdkeys.BuildExecutorKey(tc.prefix, tc.namespace, tc.executorID, etcdkeys.ExecutorAssignedStateKey)
+	statisticsKey := etcdkeys.BuildExecutorKey(tc.prefix, tc.namespace, tc.executorID, etcdkeys.ExecutorShardStatisticsKey)
 	drainedKey := etcdkeys.BuildDrainedShardKey(tc.prefix, tc.namespace, "shard-1")
 	malformedDrainedKey := etcdkeys.BuildDrainedShardsPrefix(tc.prefix, tc.namespace) + "shard/1"
 	leaderKey := fmt.Sprintf("%s/%s/leader/1234", tc.prefix, tc.namespace)
 
 	executorKVs, drainedShards := tc.e.partitionNamespaceKVs([]*mvccpb.KeyValue{
 		{Key: []byte(assignedStateKey), Value: []byte("state")},
+		{Key: []byte(statisticsKey), Value: []byte("statistics")},
 		{Key: []byte(drainedKey)},
 		{Key: []byte(malformedDrainedKey)},
 		{Key: []byte(leaderKey), Value: []byte("host-1")},
@@ -839,9 +840,6 @@ func TestNamespaceShardToExecutor_namespaceRefreshLoop_watchError(t *testing.T) 
 	}
 }
 
-// The watcher writes statistics straight into the cache, so it has to be gone before
-// namespaceRefreshLoop returns and releases the WaitGroup that ShardToExecutorCache.Stop
-// waits on.
 // Closing stopCh while the watcher sits in its retry backoff is the case that
 // used to strand it: the mocked clock is never advanced again, so a backoff that ignored
 // stopCh would leave the goroutine blocked for the rest of the process's life.
@@ -929,82 +927,6 @@ func verifyExecutorInState(t *testing.T, state map[*store.ShardOwner][]string, e
 		}
 	}
 	assert.True(t, executorInState)
-}
-
-func TestNamespaceShardToExecutor_ExecutorStatistics(t *testing.T) {
-	testCluster := testhelper.SetupStoreTestCluster(t)
-	logger := testlogger.New(t)
-	stopCh := make(chan struct{})
-	defer close(stopCh)
-	mockTime := clock.NewMockedTimeSource()
-
-	executorID := "executor-stats"
-	shardID1 := "shard-stats-1"
-	shardID2 := "shard-stats-2"
-
-	initialStats := map[string]etcdtypes.ShardStatistics{
-		shardID1: {SmoothedLoad: 10.0, LastUpdateTime: etcdtypes.Time(mockTime.Now().UTC().Add(-time.Hour)), LastMoveTime: etcdtypes.Time(mockTime.Now().UTC().Add(-2 * time.Hour))},
-		shardID2: {SmoothedLoad: 20.0, LastUpdateTime: etcdtypes.Time(mockTime.Now().UTC().Add(-30 * time.Minute)), LastMoveTime: etcdtypes.Time(mockTime.Now().UTC().Add(-90 * time.Minute))},
-	}
-	putExecutorStatisticsInEtcd(t, testCluster, executorID, initialStats)
-
-	namespaceShardToExecutor, err := newNamespaceShardToExecutor(testCluster.EtcdPrefix, testCluster.Namespace, testCluster.Client, stopCh, logger, mockTime, metrics.NewNoopMetricsClient())
-	assert.NoError(t, err)
-	namespaceShardToExecutor.Start(&sync.WaitGroup{})
-
-	// GetExecutorStatistics triggers refresh on cache miss, so no need to wait for timers
-	statsFromCache, err := namespaceShardToExecutor.GetExecutorStatistics(context.Background(), executorID)
-	require.NoError(t, err)
-	assert.Equal(t, initialStats, statsFromCache)
-
-	updatedStats := map[string]etcdtypes.ShardStatistics{
-		shardID1: {SmoothedLoad: 15.0, LastUpdateTime: etcdtypes.Time(mockTime.Now().UTC())},
-		shardID2: {SmoothedLoad: 25.0, LastUpdateTime: etcdtypes.Time(mockTime.Now().UTC())},
-	}
-	putExecutorStatisticsInEtcd(t, testCluster, executorID, updatedStats)
-
-	// Wait for stats to be updated via watch event
-	assert.Eventually(t, func() bool {
-		stats, err := namespaceShardToExecutor.GetExecutorStatistics(context.Background(), executorID)
-		if err != nil {
-			return false
-		}
-		return stats[shardID1].SmoothedLoad == 15.0
-	}, 5*time.Second, 50*time.Millisecond, "stats should be updated via watch")
-
-	statsFromCacheAfterUpdate, err := namespaceShardToExecutor.GetExecutorStatistics(context.Background(), executorID)
-	require.NoError(t, err)
-	assert.Equal(t, updatedStats, statsFromCacheAfterUpdate)
-
-	nonExistentStats, err := namespaceShardToExecutor.GetExecutorStatistics(context.Background(), "non-existent-executor")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, store.ErrExecutorNotFound)
-	assert.Nil(t, nonExistentStats)
-
-	statsKey := etcdkeys.BuildExecutorKey(testCluster.EtcdPrefix, testCluster.Namespace, executorID, etcdkeys.ExecutorShardStatisticsKey)
-	_, err = testCluster.Client.Delete(context.Background(), statsKey)
-	require.NoError(t, err)
-
-	// Wait for stats to be deleted via watch event, subsequent calls should error
-	assert.Eventually(t, func() bool {
-		_, err := namespaceShardToExecutor.GetExecutorStatistics(context.Background(), executorID)
-		return err != nil && assert.ErrorIs(t, err, store.ErrExecutorNotFound)
-	}, 5*time.Second, 50*time.Millisecond, "GetExecutorStatistics should return an error after deletion")
-}
-
-// putExecutorStatisticsInEtcd is a helper to directly put compressed executor statistics into etcd.
-func putExecutorStatisticsInEtcd(t *testing.T, tc *testhelper.StoreTestCluster, executorID string, stats map[string]etcdtypes.ShardStatistics) {
-	payload, err := json.Marshal(stats)
-	require.NoError(t, err)
-
-	writer, err := common.NewRecordWriter(tc.Compression)
-	require.NoError(t, err)
-	compressedPayload, err := writer.Write(payload)
-	require.NoError(t, err)
-
-	statsKey := etcdkeys.BuildExecutorKey(tc.EtcdPrefix, tc.Namespace, executorID, etcdkeys.ExecutorShardStatisticsKey)
-	_, err = tc.Client.Put(context.Background(), statsKey, string(compressedPayload))
-	require.NoError(t, err)
 }
 
 // verifyShardOwner checks that a shard has the expected owner and metadata
@@ -1206,69 +1128,6 @@ func TestNamespaceShardToExecutor_GetShardOwner_CallerCancelDoesNotPoisonFlight(
 	require.NotNil(t, owner)
 	assert.Equal(t, tc.executorID, owner.ExecutorID)
 	assert.EqualValues(t, 1, getCalls.Load(), "the in-flight Get must outlive the cancelled leader")
-}
-
-// Concurrent stats misses for the same executor must collapse to 1 etcd Get.
-func TestNamespaceShardToExecutor_GetExecutorStatistics_SingleFlightDedup(t *testing.T) {
-	tc := setupNamespaceShardToExecutorTestCase(t)
-	defer tc.ctrl.Finish()
-	defer close(tc.stopCh)
-
-	statsKey := etcdkeys.BuildExecutorKey(tc.prefix, tc.namespace, tc.executorID, etcdkeys.ExecutorShardStatisticsKey)
-
-	stats := map[string]etcdtypes.ShardStatistics{
-		"shard-1": {SmoothedLoad: 42.0},
-	}
-	payload, err := json.Marshal(stats)
-	require.NoError(t, err)
-	writer, err := common.NewRecordWriter("")
-	require.NoError(t, err)
-	compressedPayload, err := writer.Write(payload)
-	require.NoError(t, err)
-
-	release := make(chan struct{})
-	var getCalls atomic.Int32
-	tc.etcdClient.EXPECT().
-		Get(gomock.Any(), statsKey).
-		DoAndReturn(func(ctx context.Context, _ string, _ ...clientv3.OpOption) (*clientv3.GetResponse, error) {
-			getCalls.Add(1)
-			select {
-			case <-release:
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-			return &clientv3.GetResponse{Kvs: []*mvccpb.KeyValue{
-				{Key: []byte(statsKey), Value: compressedPayload},
-			}}, nil
-		}).
-		AnyTimes()
-
-	const numCallers = 20
-	var wg sync.WaitGroup
-	results := make([]map[string]etcdtypes.ShardStatistics, numCallers)
-	errs := make([]error, numCallers)
-	start := make(chan struct{})
-	for i := 0; i < numCallers; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			<-start
-			results[i], errs[i] = tc.e.GetExecutorStatistics(context.Background(), tc.executorID)
-		}(i)
-	}
-	close(start)
-
-	require.Eventually(t, func() bool { return getCalls.Load() >= 1 }, time.Second, time.Millisecond)
-	time.Sleep(20 * time.Millisecond)
-
-	close(release)
-	wg.Wait()
-
-	require.EqualValues(t, 1, getCalls.Load(), "concurrent stats misses should collapse to one etcd Get")
-	for i := 0; i < numCallers; i++ {
-		require.NoError(t, errs[i])
-		assert.Equal(t, stats, results[i])
-	}
 }
 
 // A hung etcd Get must not hold the singleflight key forever: the bounded
