@@ -37,8 +37,8 @@ type base struct {
 	timeSource   clock.TimeSource
 }
 
-func (p *base) updateErrorMetricPerNamespace(scope metrics.ScopeIdx, err error, scopeWithNamespaceTags metrics.Scope) {
-	if isShardStatisticsSkip(scope, err) {
+func (p *base) updateErrorMetricPerNamespace(err error, scopeWithNamespaceTags metrics.Scope, scopeIdx metrics.ScopeIdx) {
+	if isShardStatisticsSkip(err, scopeIdx) {
 		scopeWithNamespaceTags.IncCounter(metrics.ShardDistributorStoreShardStatisticsSkipped)
 		return
 	}
@@ -50,8 +50,8 @@ func (p *base) updateErrorMetricPerNamespace(scope metrics.ScopeIdx, err error, 
 	scopeWithNamespaceTags.IncCounter(metrics.ShardDistributorStoreFailuresPerNamespace)
 }
 
-func (p *base) call(scope metrics.ScopeIdx, op func() error, tags ...metrics.Tag) error {
-	metricsScope := p.metricClient.Scope(scope, tags...)
+func (p *base) call(scopeIdx metrics.ScopeIdx, op func() error, tags ...metrics.Tag) error {
+	metricsScope := p.metricClient.Scope(scopeIdx, tags...)
 
 	metricsScope.IncCounter(metrics.ShardDistributorStoreRequestsPerNamespace)
 	before := p.timeSource.Now()
@@ -60,12 +60,12 @@ func (p *base) call(scope metrics.ScopeIdx, op func() error, tags ...metrics.Tag
 	metricsScope.RecordHistogramDuration(metrics.ShardDistributorStoreLatencyHistogramPerNamespace, duration)
 
 	if err != nil {
-		p.updateErrorMetricPerNamespace(scope, err, metricsScope)
+		p.updateErrorMetricPerNamespace(err, metricsScope, scopeIdx)
 	}
 	return err
 }
 
-func isShardStatisticsSkip(scope metrics.ScopeIdx, err error) bool {
-	return scope == metrics.ShardDistributorStoreRecordShardStatisticsScope &&
+func isShardStatisticsSkip(err error, scopeIdx metrics.ScopeIdx) bool {
+	return scopeIdx == metrics.ShardDistributorStoreRecordShardStatisticsScope &&
 		errors.Is(err, store.ErrVersionConflict)
 }
