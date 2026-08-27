@@ -59,24 +59,21 @@ func buildStatisticsUpdates(
 		assignedState := newAssignments[executorID]
 		statisticsByShard := make(map[string]store.ShardStatistics, len(assignedState.AssignedShards))
 		for shardID := range assignedState.AssignedShards {
-			previousOwnerID, previouslyAssigned := previousOwnersByShard[shardID]
+			previousOwnerID, hadPreviousOwner := previousOwnersByShard[shardID]
 			shardStatistics, hasPreviousStatistics := previousStatistics[shardID]
-			sameOwner := previouslyAssigned && previousOwnerID == executorID
+			sameOwner := hadPreviousOwner && previousOwnerID == executorID
+			hasStatisticsFromPreviousAssignment := hadPreviousOwner && hasPreviousStatistics
 
-			if sameOwner {
-				// Preserve existing statistics. If none exist, store the zero value so a
-				// later move still records LastMoveTime.
-				statisticsByShard[shardID] = shardStatistics
-			} else {
-				// Preserve existing statistics and start a new cooldown when a shard moves.
-				// First assignments and shards without previous statistics start empty.
-				if previouslyAssigned && hasPreviousStatistics {
+			if !sameOwner {
+				if hasStatisticsFromPreviousAssignment {
 					shardStatistics.LastMoveTime = now
 				} else {
 					shardStatistics = store.ShardStatistics{}
 				}
-				statisticsByShard[shardID] = shardStatistics
 			}
+
+			// Store the zero value for unmeasured shards so a later move records LastMoveTime.
+			statisticsByShard[shardID] = shardStatistics
 		}
 		updates = append(updates, store.ExecutorShardStatistics{
 			ExecutorID: executorID,
