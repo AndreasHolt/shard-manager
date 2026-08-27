@@ -64,9 +64,9 @@ func buildStatisticsUpdates(
 			sameOwner := previouslyAssigned && previousOwnerID == executorID
 
 			if sameOwner {
-				if hasPreviousStatistics {
-					statisticsByShard[shardID] = shardStatistics
-				}
+				// Preserve existing statistics. If none exist, store the zero value so a
+				// later move still records LastMoveTime.
+				statisticsByShard[shardID] = shardStatistics
 			} else {
 				// Preserve existing statistics and start a new cooldown when a shard moves.
 				// First assignments and shards without previous statistics start empty.
