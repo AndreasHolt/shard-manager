@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -324,14 +325,15 @@ func (h *handlerImpl) ListNamespaces(_ context.Context, _ *types.ListNamespacesR
 }
 
 func (h *handlerImpl) sendWatchResponse(namespace string, server WatchNamespaceStateServer) error {
-	executorState, e := h.storage.GetShardAssignments(namespace)
+	state, e := h.storage.GetShardAssignments(namespace)
 	if e != nil {
 		return &types.InternalServiceError{Message: fmt.Sprintf("failed to get shard assignments: %v", e)}
 	}
 	response := &types.WatchNamespaceStateResponse{
-		Executors: make([]*types.ExecutorShardAssignment, 0, len(executorState)),
+		Executors:        make([]*types.ExecutorShardAssignment, 0, len(state.ExecutorToShards)),
+		DrainedShardKeys: slices.Sorted(maps.Keys(state.DrainedShards)),
 	}
-	for ex, shardIDs := range executorState {
+	for ex, shardIDs := range state.ExecutorToShards {
 		response.Executors = append(response.Executors, &types.ExecutorShardAssignment{
 			ExecutorID:     ex.ExecutorID,
 			AssignedShards: WrapShards(shardIDs),
