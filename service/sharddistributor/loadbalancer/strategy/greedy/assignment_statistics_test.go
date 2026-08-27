@@ -15,6 +15,7 @@ func TestPrepareAssignmentStatistics(t *testing.T) {
 
 	sourceExecutorID := "source"
 	sourceShardID := "stay-source"
+	unmeasuredSourceShardID := "stay-source-unmeasured"
 	sourceShardStatistics := store.ShardStatistics{
 		SmoothedLoad:   20,
 		LastUpdateTime: now.Add(-time.Minute),
@@ -48,8 +49,9 @@ func TestPrepareAssignmentStatistics(t *testing.T) {
 	previousAssignments := map[string]store.AssignedState{
 		sourceExecutorID: {
 			AssignedShards: map[string]*types.ShardAssignment{
-				movedShardID:  {Status: types.AssignmentStatusREADY},
-				sourceShardID: {Status: types.AssignmentStatusREADY},
+				movedShardID:            {Status: types.AssignmentStatusREADY},
+				sourceShardID:           {Status: types.AssignmentStatusREADY},
+				unmeasuredSourceShardID: {Status: types.AssignmentStatusREADY},
 			},
 		},
 		destinationExecutorID: {
@@ -61,7 +63,8 @@ func TestPrepareAssignmentStatistics(t *testing.T) {
 	newAssignments := map[string]store.AssignedState{
 		sourceExecutorID: {
 			AssignedShards: map[string]*types.ShardAssignment{
-				sourceShardID: {Status: types.AssignmentStatusREADY},
+				sourceShardID:           {Status: types.AssignmentStatusREADY},
+				unmeasuredSourceShardID: {Status: types.AssignmentStatusREADY},
 			},
 		},
 		destinationExecutorID: {
@@ -86,10 +89,11 @@ func TestPrepareAssignmentStatistics(t *testing.T) {
 	}
 
 	// The moved shard carries its statistics to the destination. Existing shards
-	// keep their statistics, while the newly assigned shard starts empty.
+	// preserve their statistics or remain unmeasured, while the new shard starts empty.
 	expectedUpdates := map[string]map[string]store.ShardStatistics{
 		sourceExecutorID: {
-			sourceShardID: sourceShardStatistics,
+			sourceShardID:           sourceShardStatistics,
+			unmeasuredSourceShardID: {},
 		},
 		destinationExecutorID: {
 			movedShardID:       expectedMovedShardStatistics,

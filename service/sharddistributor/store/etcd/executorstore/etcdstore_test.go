@@ -782,50 +782,46 @@ func TestRecordShardStatisticsBatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	source := "transfer-source"
-	sourceShard := "transfer-source-stay"
-	sourceShardSmoothedLoad := 3.0
-
-	destination := "transfer-destination"
-	destinationShard := "transfer-destination-stay"
-	destinationShardSmoothedLoad := 7.0
-
-	movedShard := "transfer-moved"
-	movedSmoothedLoad := 12.5
-
+	firstExecutorID := "executor-1"
+	secondExecutorID := "executor-2"
 	now := time.Now().UTC()
 
-	err := executorStore.RecordHeartbeat(ctx, tc.Namespace, source, store.HeartbeatState{Status: types.ExecutorStatusACTIVE})
+	// 1. Register the executors whose statistics will be recorded.
+	err := executorStore.RecordHeartbeat(ctx, tc.Namespace, firstExecutorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE})
 	require.NoError(t, err)
-	err = executorStore.RecordHeartbeat(ctx, tc.Namespace, destination, store.HeartbeatState{Status: types.ExecutorStatusACTIVE})
+	err = executorStore.RecordHeartbeat(ctx, tc.Namespace, secondExecutorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE})
 	require.NoError(t, err)
 
-	sourceStatistics := map[string]store.ShardStatistics{
-		sourceShard: {SmoothedLoad: sourceShardSmoothedLoad},
+	// 2. Build the complete statistics maps. The store persists these values without
+	// interpreting why a shard appears under a particular executor.
+	firstStatistics := map[string]store.ShardStatistics{
+		"shard-1": {SmoothedLoad: 3},
 	}
-	destinationStatistics := map[string]store.ShardStatistics{
-		movedShard: {
-			SmoothedLoad:   movedSmoothedLoad,
+	secondStatistics := map[string]store.ShardStatistics{
+		"shard-2": {
+			SmoothedLoad:   12.5,
 			LastUpdateTime: now.Add(-time.Minute),
 			LastMoveTime:   now,
 		},
-		destinationShard: {SmoothedLoad: destinationShardSmoothedLoad},
+		"shard-3": {SmoothedLoad: 7},
 	}
 	updates := []store.ExecutorShardStatistics{
-		{ExecutorID: source, Statistics: sourceStatistics},
-		{ExecutorID: destination, Statistics: destinationStatistics},
+		{ExecutorID: firstExecutorID, Statistics: firstStatistics},
+		{ExecutorID: secondExecutorID, Statistics: secondStatistics},
 	}
 
+	// 3. Record both executor maps in one batch.
 	err = executorStore.RecordShardStatisticsBatch(ctx, tc.Namespace, updates)
 	require.NoError(t, err)
 
-	sourceState, err := executorStore.GetExecutorState(ctx, tc.Namespace, source)
+	// 4. Verify each complete map was persisted unchanged.
+	firstExecutorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, firstExecutorID)
 	require.NoError(t, err)
-	assert.Equal(t, sourceStatistics, sourceState.Statistics)
+	assert.Equal(t, firstStatistics, firstExecutorState.Statistics)
 
-	destinationState, err := executorStore.GetExecutorState(ctx, tc.Namespace, destination)
+	secondExecutorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, secondExecutorID)
 	require.NoError(t, err)
-	assert.Equal(t, destinationStatistics, destinationState.Statistics)
+	assert.Equal(t, secondStatistics, secondExecutorState.Statistics)
 }
 
 // TestGetShardStatisticsForMissingShard verifies GetState does not report statistics for unknown shards.

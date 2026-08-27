@@ -150,15 +150,35 @@ func TestPrepareShardStatisticsSkipsNaiveMode(t *testing.T) {
 
 func TestPrepareAssignmentStatisticsDispatch(t *testing.T) {
 	tests := []struct {
-		name        string
-		mode        string
-		wantUpdates int
-		wantErr     bool
+		name            string
+		mode            string
+		expectedUpdates []store.ExecutorShardStatistics
+		expectError     bool
 	}{
-		{name: "naive", mode: config.LoadBalancingModeNAIVE},
-		{name: "greedy", mode: config.LoadBalancingModeGREEDY, wantUpdates: 1},
-		{name: "invalid", mode: config.LoadBalancingModeINVALID, wantErr: true},
+		{
+			name: "naive mode skips assignment statistics",
+			mode: config.LoadBalancingModeNAIVE,
+		},
+		{
+			name: "greedy mode initializes statistics for a new shard",
+			mode: config.LoadBalancingModeGREEDY,
+			expectedUpdates: []store.ExecutorShardStatistics{
+				{
+					ExecutorID: "executor-1",
+					Statistics: map[string]store.ShardStatistics{
+						"shard-1": {},
+					},
+				},
+			},
+		},
+		{
+			name:        "unsupported mode returns an error",
+			mode:        config.LoadBalancingModeINVALID,
+			expectError: true,
+		},
 	}
+	// With no previous assignment or statistics, greedy treats shard-1 as newly
+	// assigned and records a zero value statistic for executor-1.
 	newAssignments := map[string]store.AssignedState{
 		"executor-1": {
 			AssignedShards: map[string]*types.ShardAssignment{
@@ -183,13 +203,13 @@ func TestPrepareAssignmentStatisticsDispatch(t *testing.T) {
 				now,
 			)
 
-			if tt.wantErr {
+			if tt.expectError {
 				require.Error(t, err)
 				assert.Nil(t, updates)
 				return
 			}
 			require.NoError(t, err)
-			assert.Len(t, updates, tt.wantUpdates)
+			assert.Equal(t, tt.expectedUpdates, updates)
 		})
 	}
 }
