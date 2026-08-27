@@ -552,6 +552,11 @@ func TestRebalanceShards_AppliesNaiveLoadBalancingPlan(t *testing.T) {
 func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
+	initialShardsPerExecutor := 50
+	moveBudgetProportion := 0.01
+	// With 100 shards total, a 1% move budget permits one shard move.
+	expectedMovedShards := 1
+
 	mocks.sdConfig.LoadBalancingMode = func(namespace string) string {
 		return config.LoadBalancingModeGREEDY
 	}
@@ -560,7 +565,7 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 			return time.Minute
 		},
 		MoveBudgetProportion: func(namespace string) float64 {
-			return 0.01
+			return moveBudgetProportion
 		},
 		HysteresisUpperBand: func(namespace string) float64 {
 			return 1.15
@@ -587,13 +592,13 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		"exec-2": {AssignedShards: make(map[string]*types.ShardAssignment)},
 	}
 	shardStats := make(map[string]store.ShardStatistics)
-	for i := range 50 {
+	for i := range initialShardsPerExecutor {
 		shardID := "a-" + strconv.Itoa(i)
 		assignments["exec-1"].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 3.0, LastUpdateTime: now}
 		mocks.store.EXPECT().GetShardOwner(gomock.Any(), mocks.cfg.Name, shardID).Return(&store.ShardOwner{ExecutorID: "exec-1"}, nil).AnyTimes()
 	}
-	for i := range 50 {
+	for i := range initialShardsPerExecutor {
 		shardID := "b-" + strconv.Itoa(i)
 		assignments["exec-2"].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1.0, LastUpdateTime: now}
@@ -608,8 +613,8 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, 49)
-			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, 51)
+			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, initialShardsPerExecutor-expectedMovedShards)
+			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, initialShardsPerExecutor+expectedMovedShards)
 			return nil
 		},
 	)
@@ -619,8 +624,8 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 			for _, update := range updates {
 				updatesByExecutor[update.ExecutorID] = update.Statistics
 			}
-			assert.Len(t, updatesByExecutor["exec-1"], 49)
-			assert.Len(t, updatesByExecutor["exec-2"], 51)
+			assert.Len(t, updatesByExecutor["exec-1"], initialShardsPerExecutor-expectedMovedShards)
+			assert.Len(t, updatesByExecutor["exec-2"], initialShardsPerExecutor+expectedMovedShards)
 			return assert.AnError
 		},
 	)
