@@ -1508,7 +1508,6 @@ const (
 	ShardDistributorGetDrainedShardsScope
 
 	ShardDistributorStoreGetShardOwnerScope
-	ShardDistributorStoreAssignShardScope
 	ShardDistributorStoreAssignShardsScope
 	ShardDistributorStoreDeleteExecutorsScope
 	ShardDistributorStoreGetShardStatsScope
@@ -2230,7 +2229,6 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		ShardDistributorGetDrainedShardsScope:                      {operation: "GetDrainedShards"},
 		ShardDistributorExecutorScope:                              {operation: "Executor"},
 		ShardDistributorStoreGetShardOwnerScope:                    {operation: "StoreGetShardOwner"},
-		ShardDistributorStoreAssignShardScope:                      {operation: "StoreAssignShard"},
 		ShardDistributorStoreAssignShardsScope:                     {operation: "StoreAssignShards"},
 		ShardDistributorStoreDeleteExecutorsScope:                  {operation: "StoreDeleteExecutors"},
 		ShardDistributorStoreGetShardStatsScope:                    {operation: "StoreGetShardStats"},

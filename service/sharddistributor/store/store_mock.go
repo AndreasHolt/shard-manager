@@ -64,20 +64,6 @@ func (m *MockStore) EXPECT() *MockStoreMockRecorder {
 	return m.recorder
 }
 
-// AssignShard mocks base method.
-func (m *MockStore) AssignShard(ctx context.Context, namespace, shardID, executorID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AssignShard", ctx, namespace, shardID, executorID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// AssignShard indicates an expected call of AssignShard.
-func (mr *MockStoreMockRecorder) AssignShard(ctx, namespace, shardID, executorID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AssignShard", reflect.TypeOf((*MockStore)(nil).AssignShard), ctx, namespace, shardID, executorID)
-}
-
 // AssignShards mocks base method.
 func (m *MockStore) AssignShards(ctx context.Context, namespace string, request AssignShardsRequest, guard GuardFunc) error {
 	m.ctrl.T.Helper()
