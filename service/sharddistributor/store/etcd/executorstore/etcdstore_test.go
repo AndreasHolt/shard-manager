@@ -171,7 +171,7 @@ func TestRecordShardStatisticsWritesPreparedStatistics(t *testing.T) {
 	now := time.Now().UTC()
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
-	assignShardForTest(t, ctx, executorStore, tc.Namespace, shardID, executorID)
+	assignShardForTest(ctx, t, executorStore, tc.Namespace, shardID, executorID)
 	executorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
 	assignedState := executorState.Assignment
@@ -205,7 +205,7 @@ func TestRecordShardStatisticsReturnsConflictForStaleAssignment(t *testing.T) {
 	staleSmoothedLoad := 1000.0
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
-	assignShardForTest(t, ctx, executorStore, tc.Namespace, shardID, executorID)
+	assignShardForTest(ctx, t, executorStore, tc.Namespace, shardID, executorID)
 	executorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
 	staleAssignedState := executorState.Assignment
@@ -216,7 +216,7 @@ func TestRecordShardStatisticsReturnsConflictForStaleAssignment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Changing this executor's assignment invalidates staleAssignedState.ModRevision.
-	assignShardForTest(t, ctx, executorStore, tc.Namespace, "new-shard", executorID)
+	assignShardForTest(ctx, t, executorStore, tc.Namespace, "new-shard", executorID)
 	staleStats := map[string]store.ShardStatistics{shardID: {SmoothedLoad: staleSmoothedLoad}}
 	err = executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, staleAssignedState.ModRevision, staleStats)
 	require.ErrorIs(t, err, store.ErrVersionConflict)
@@ -619,9 +619,9 @@ func TestDeleteExecutors(t *testing.T) {
 		require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, execToDelete2, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 		require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, execToKeep, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 
-		assignShardForTest(t, ctx, executorStore, tc.Namespace, shardOfDeletedExecutor1, execToDelete1)
-		assignShardForTest(t, ctx, executorStore, tc.Namespace, shardOfDeletedExecutor2, execToDelete2)
-		assignShardForTest(t, ctx, executorStore, tc.Namespace, shardOfSurvivingExecutor, execToKeep)
+		assignShardForTest(ctx, t, executorStore, tc.Namespace, shardOfDeletedExecutor1, execToDelete1)
+		assignShardForTest(ctx, t, executorStore, tc.Namespace, shardOfDeletedExecutor2, execToDelete2)
+		assignShardForTest(ctx, t, executorStore, tc.Namespace, shardOfSurvivingExecutor, execToKeep)
 
 		// Action: Delete two of the three executors in one call.
 		err := executorStore.DeleteExecutors(ctx, tc.Namespace, []string{execToDelete1, execToDelete2}, store.NopGuard())
@@ -727,7 +727,7 @@ func stringStatus(s types.ExecutorStatus) string {
 	return string(res)
 }
 
-func assignShardForTest(t *testing.T, ctx context.Context, executorStore store.Store, namespace, shardID, executorID string) {
+func assignShardForTest(ctx context.Context, t *testing.T, executorStore store.Store, namespace, shardID, executorID string) {
 	t.Helper()
 
 	namespaceState, err := executorStore.GetState(ctx, namespace)
@@ -1077,8 +1077,8 @@ func TestResetNamespace(t *testing.T) {
 		require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorB, store.HeartbeatState{
 			Status: types.ExecutorStatusACTIVE,
 		}))
-		assignShardForTest(t, ctx, executorStore, tc.Namespace, "shard-1", executorA)
-		assignShardForTest(t, ctx, executorStore, tc.Namespace, "shard-2", executorB)
+		assignShardForTest(ctx, t, executorStore, tc.Namespace, "shard-1", executorA)
+		assignShardForTest(ctx, t, executorStore, tc.Namespace, "shard-2", executorB)
 
 		// Seed an executor in a sibling namespace that must not be touched.
 		siblingNs := tc.Namespace + "-sibling"
@@ -1166,7 +1166,7 @@ func TestGetShardOwnerRefusesDrainedShards(t *testing.T) {
 	shardID := "shard-drain-read-path"
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
-	assignShardForTest(t, ctx, executorStore, tc.Namespace, shardID, executorID)
+	assignShardForTest(ctx, t, executorStore, tc.Namespace, shardID, executorID)
 	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{shardID}))
 
 	require.Eventually(t, func() bool {
@@ -1229,7 +1229,11 @@ func TestSubscribeToAssignmentChanges_NotifiesOnDrain(t *testing.T) {
 	shardID := "shard-drain-subscribe"
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
-	assignShardForTest(t, ctx, executorStore, tc.Namespace, shardID, executorID)
+	assignShardForTest(ctx, t, executorStore, tc.Namespace, shardID, executorID)
+	require.Eventually(t, func() bool {
+		owner, err := executorStore.GetShardOwner(ctx, tc.Namespace, shardID)
+		return err == nil && owner.ExecutorID == executorID
+	}, 5*time.Second, 50*time.Millisecond)
 
 	notifications, unsubscribe, err := executorStore.SubscribeToAssignmentChanges(ctx, tc.Namespace)
 	require.NoError(t, err)
