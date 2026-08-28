@@ -158,115 +158,75 @@ func TestRecordHeartbeat_NoCompression(t *testing.T) {
 	assert.Equal(t, string(reportedJSON), string(reportedResp.Kvs[0].Value))
 }
 
-func TestRecordHeartbeatUpdatesShardStatistics(t *testing.T) {
+func TestRecordShardStatisticsWritesPreparedStatistics(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)
 	executorStore := createStore(t, tc)
-	setLoadBalancingMode(executorStore, config.LoadBalancingModeGREEDY)
-	setLoadSmoothingTimeConstant(executorStore, 90*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	executorID := "executor-shard-stats"
 	shardID := "shard-with-load"
+	preparedSmoothedLoad := 45.6
+	now := time.Now().UTC()
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
 	assignShardForTest(t, ctx, executorStore, tc.Namespace, shardID, executorID)
-
-	impl := executorStore.(*executorStoreImpl)
-	assert.Eventually(t, func() bool {
-		owner, err := impl.shardCache.GetShardOwner(ctx, tc.Namespace, shardID)
-		return err == nil && owner.ExecutorID == executorID
-	}, 5*time.Second, 50*time.Millisecond)
-
-	stateBeforeHeartbeat, err := executorStore.GetState(ctx, tc.Namespace)
+	executorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
-	beforeStats, ok := stateBeforeHeartbeat.ShardStats[shardID]
-	require.True(t, ok)
-	assert.True(t, beforeStats.LastUpdateTime.IsZero(), "assigned shard should be unmeasured until first heartbeat")
+	assignedState := executorState.Assignment
+	require.NotNil(t, assignedState)
 
-	impl.timeSource.(clock.MockedTimeSource).Advance(5 * time.Second)
-
-	req := store.HeartbeatState{
-		LastHeartbeat: impl.timeSource.Now().UTC(),
-		Status:        types.ExecutorStatusACTIVE,
-		ReportedShards: map[string]*types.ShardStatusReport{
-			shardID: {
-				Status:    types.ShardStatusREADY,
-				ShardLoad: 45.6,
-			},
+	preparedStats := map[string]store.ShardStatistics{
+		shardID: {
+			SmoothedLoad:   preparedSmoothedLoad,
+			LastUpdateTime: now,
+			LastMoveTime:   now.Add(-time.Minute),
 		},
 	}
-
-	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, req))
-
-	nsState, err := executorStore.GetState(ctx, tc.Namespace)
+	err = executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, assignedState.ModRevision, preparedStats)
 	require.NoError(t, err)
 
-	updated, ok := nsState.ShardStats[shardID]
-	require.True(t, ok)
-	assert.True(t, updated.LastUpdateTime.After(beforeStats.LastUpdateTime))
-	assert.InDelta(t, req.ReportedShards[shardID].ShardLoad, updated.SmoothedLoad, 1e-9)
-	assert.Equal(t, beforeStats.LastMoveTime, updated.LastMoveTime)
+	executorState, err = executorStore.GetExecutorState(ctx, tc.Namespace, executorID)
+	require.NoError(t, err)
+	assert.Equal(t, preparedStats, executorState.Statistics)
 }
 
-func TestRecordHeartbeatSkipsShardStatisticsWithNilReport(t *testing.T) {
+func TestRecordShardStatisticsReturnsConflictForStaleAssignment(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)
 	executorStore := createStore(t, tc)
-	setLoadBalancingMode(executorStore, config.LoadBalancingModeGREEDY)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	executorID := "executor-missing-load"
-	validShardID := "shard-with-valid-load"
-	skippedShardID := "shard-missing-load"
+	executorID := "executor-stale-snapshot"
+	shardID := "shard-with-stats"
+	initialSmoothedLoad := 10.0
+	staleSmoothedLoad := 1000.0
 
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
-	assignShardForTest(t, ctx, executorStore, tc.Namespace, validShardID, executorID)
-
-	impl := executorStore.(*executorStoreImpl)
-	assert.Eventually(t, func() bool {
-		owner, err := impl.shardCache.GetShardOwner(ctx, tc.Namespace, validShardID)
-		return err == nil && owner.ExecutorID == executorID
-	}, 5*time.Second, 50*time.Millisecond)
-
-	stateBeforeHeartbeat, err := executorStore.GetState(ctx, tc.Namespace)
+	assignShardForTest(t, ctx, executorStore, tc.Namespace, shardID, executorID)
+	executorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
-	beforeStats, ok := stateBeforeHeartbeat.ShardStats[validShardID]
-	require.True(t, ok)
+	staleAssignedState := executorState.Assignment
+	require.NotNil(t, staleAssignedState)
 
-	impl.timeSource.(clock.MockedTimeSource).Advance(5 * time.Second)
-
-	req := store.HeartbeatState{
-		LastHeartbeat: impl.timeSource.Now().UTC(),
-		Status:        types.ExecutorStatusACTIVE,
-		ReportedShards: map[string]*types.ShardStatusReport{
-			validShardID: {
-				Status:    types.ShardStatusREADY,
-				ShardLoad: 3.21,
-			},
-			skippedShardID: nil,
-		},
-	}
-
-	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, req))
-
-	nsState, err := executorStore.GetState(ctx, tc.Namespace)
+	initialStats := map[string]store.ShardStatistics{shardID: {SmoothedLoad: initialSmoothedLoad}}
+	err = executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, staleAssignedState.ModRevision, initialStats)
 	require.NoError(t, err)
 
-	validStats, ok := nsState.ShardStats[validShardID]
-	require.True(t, ok)
-	expectedLoad, err := statistics.CalculateSmoothedLoad(beforeStats.SmoothedLoad, req.ReportedShards[validShardID].ShardLoad, beforeStats.LastUpdateTime, validStats.LastUpdateTime, statistics.DefaultLoadSmoothingTimeConstant)
-	require.NoError(t, err)
-	assert.InDelta(t, expectedLoad, validStats.SmoothedLoad, 1e-9)
-	assert.False(t, validStats.LastUpdateTime.IsZero())
-	assert.Equal(t, beforeStats.LastMoveTime, validStats.LastMoveTime)
+	// Changing this executor's assignment invalidates staleAssignedState.ModRevision.
+	assignShardForTest(t, ctx, executorStore, tc.Namespace, "new-shard", executorID)
+	staleStats := map[string]store.ShardStatistics{shardID: {SmoothedLoad: staleSmoothedLoad}}
+	err = executorStore.RecordShardStatistics(ctx, tc.Namespace, executorID, staleAssignedState.ModRevision, staleStats)
+	require.ErrorIs(t, err, store.ErrVersionConflict)
 
-	assert.NotContains(t, nsState.ShardStats, skippedShardID)
+	executorState, err = executorStore.GetExecutorState(ctx, tc.Namespace, executorID)
+	require.NoError(t, err)
+	assert.Equal(t, initialStats, executorState.Statistics)
 }
 
-func TestGetHeartbeat(t *testing.T) {
+func TestGetExecutorState(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)
 	executorStore := createStore(t, tc)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -299,18 +259,19 @@ func TestGetHeartbeat(t *testing.T) {
 	}, store.NopGuard()))
 
 	// 2. Get the heartbeat back
-	hb, assignedFromDB, err := executorStore.GetHeartbeat(ctx, tc.Namespace, executorID)
+	executorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, executorID)
 	require.NoError(t, err)
-	require.NotNil(t, hb)
+	require.NotNil(t, executorState.Heartbeat)
 
 	// 3. Verify the state
-	assert.Equal(t, types.ExecutorStatusDRAINING, hb.Status)
-	assert.Equal(t, now, hb.LastHeartbeat)
-	require.NotNil(t, assignedFromDB.AssignedShards)
-	assert.Equal(t, assignState[executorID].AssignedShards, assignedFromDB.AssignedShards)
+	assert.Equal(t, types.ExecutorStatusDRAINING, executorState.Heartbeat.Status)
+	assert.Equal(t, now, executorState.Heartbeat.LastHeartbeat)
+	require.NotNil(t, executorState.Assignment.AssignedShards)
+	assert.Equal(t, assignState[executorID].AssignedShards, executorState.Assignment.AssignedShards)
+	assert.Empty(t, executorState.Statistics)
 
 	// 4. Test getting a non-existent executor
-	_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, "executor-non-existent")
+	_, err = executorStore.GetExecutorState(ctx, tc.Namespace, "executor-non-existent")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, store.ErrExecutorNotFound)
 }
@@ -668,14 +629,14 @@ func TestDeleteExecutors(t *testing.T) {
 
 		// Verification:
 		// 1. Check deleted executors are gone.
-		_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToDelete1)
+		_, err = executorStore.GetExecutorState(ctx, tc.Namespace, execToDelete1)
 		assert.ErrorIs(t, err, store.ErrExecutorNotFound, "Executor 1 should be gone")
 
-		_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToDelete2)
+		_, err = executorStore.GetExecutorState(ctx, tc.Namespace, execToDelete2)
 		assert.ErrorIs(t, err, store.ErrExecutorNotFound, "Executor 2 should be gone")
 
 		// 2. Check that the surviving executor remain.
-		_, _, err = executorStore.GetHeartbeat(ctx, tc.Namespace, execToKeep)
+		_, err = executorStore.GetExecutorState(ctx, tc.Namespace, execToKeep)
 		assert.NoError(t, err, "Surviving executor should still exist")
 	})
 }
@@ -804,14 +765,6 @@ func setLoadBalancingMode(executorStore store.Store, mode string) {
 		impl.cfg = &config.Config{}
 	}
 	impl.cfg.LoadBalancingMode = func(string) string { return mode }
-}
-
-func setLoadSmoothingTimeConstant(executorStore store.Store, value time.Duration) {
-	impl := executorStore.(*executorStoreImpl)
-	if impl.cfg == nil {
-		impl.cfg = &config.Config{}
-	}
-	impl.cfg.LoadBalancingGreedy.LoadSmoothingTimeConstant = func(string) time.Duration { return value }
 }
 
 // trackingTxn implements clientv3.Txn to record operations per batch for testing.
@@ -1262,6 +1215,55 @@ func TestUndrainShardsReportsOnlyActualRemovals(t *testing.T) {
 	removed, err = executorStore.UndrainShards(ctx, tc.Namespace, []string{"shard-A", "never-drained"})
 	require.NoError(t, err)
 	assert.Empty(t, removed, "repeating the same undrain removes nothing further")
+}
+
+// Spectators learn about drains through this subscription, so a drain has to
+// produce a notification on its own with no executor assignment change.
+func TestSubscribeToAssignmentChanges_NotifiesOnDrain(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	executorID := "executor-drain-subscribe"
+	shardID := "shard-drain-subscribe"
+
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	assignShardForTest(t, ctx, executorStore, tc.Namespace, shardID, executorID)
+
+	notifications, unsubscribe, err := executorStore.SubscribeToAssignmentChanges(ctx, tc.Namespace)
+	require.NoError(t, err)
+	defer unsubscribe()
+
+	// Drain a shard without touching the assigned_state
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{shardID}))
+
+	// Notifications are coalesced, so read the current cache after each wake-up.
+	var drainedSnapshot store.AssignmentSnapshot
+	deadline := time.After(10 * time.Second)
+	for {
+		var gotDrain bool
+		select {
+		case <-notifications:
+			drainedSnapshot, err = executorStore.GetShardAssignments(tc.Namespace)
+			require.NoError(t, err)
+			_, gotDrain = drainedSnapshot.DrainedShards[shardID]
+		case <-deadline:
+			t.Fatal("drain should notify the assignment subscribers")
+		}
+		if gotDrain {
+			break
+		}
+	}
+
+	// The assignment is read atomically with the drained set.
+	assignedShards := make([]string, 0)
+	for owner, shardIDs := range drainedSnapshot.ExecutorToShards {
+		if owner.ExecutorID == executorID {
+			assignedShards = append(assignedShards, shardIDs...)
+		}
+	}
+	assert.Equal(t, []string{shardID}, assignedShards)
 }
 
 // Draining must not leak across namespaces: the drained keyspace is per-namespace and
