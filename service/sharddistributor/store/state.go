@@ -95,6 +95,11 @@ type ShardOwner struct {
 	Metadata   map[string]string
 }
 
+type AssignmentSnapshot struct {
+	ExecutorToShards map[*ShardOwner][]string
+	DrainedShards    map[string]struct{}
+}
+
 // CountExecutorsByStatus returns a map of executor status to the count of executors with that status
 func (ns *NamespaceState) CountExecutorsByStatus() map[types.ExecutorStatus]int {
 	counts := make(map[types.ExecutorStatus]int)
@@ -118,4 +123,9 @@ func ShardOwners(assignments map[string]AssignedState) map[string]string {
 		}
 	}
 	return owners
+}
+
+func (ns *NamespaceState) IsShardDrained(shardID string) bool {
+	_, drained := ns.DrainedShards[shardID]
+	return drained
 }

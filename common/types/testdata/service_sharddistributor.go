@@ -83,6 +83,7 @@ var (
 				Metadata:       map[string]string{"key-2": "value-2"},
 			},
 		},
+		DrainedShardKeys: []string{"shard-4", "shard-5"},
 	}
 	ShardDistributorGetNamespaceStateRequest = types.GetNamespaceStateRequest{
 		Namespace: "namespace",
@@ -127,7 +128,7 @@ var (
 				ShardNum: 32,
 			},
 			{
-				Name: "test-external-assignment",
+				Name: "shard-distributor-canary-ephemeral",
 				Type: "ephemeral",
 				Mode: "distributed_pass",
 			},

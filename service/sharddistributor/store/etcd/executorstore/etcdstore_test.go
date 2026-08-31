@@ -1363,6 +1363,55 @@ func TestUndrainShardsReportsOnlyActualRemovals(t *testing.T) {
 	assert.Empty(t, removed, "repeating the same undrain removes nothing further")
 }
 
+// Spectators learn about drains through this subscription, so a drain has to
+// produce a notification on its own with no executor assignment change.
+func TestSubscribeToAssignmentChanges_NotifiesOnDrain(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	executorID := "executor-drain-subscribe"
+	shardID := "shard-drain-subscribe"
+
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
+
+	notifications, unsubscribe, err := executorStore.SubscribeToAssignmentChanges(ctx, tc.Namespace)
+	require.NoError(t, err)
+	defer unsubscribe()
+
+	// Drain a shard without touching the assigned_state
+	require.NoError(t, executorStore.DrainShards(ctx, tc.Namespace, []string{shardID}))
+
+	// Notifications are coalesced, so read the current cache after each wake-up.
+	var drainedSnapshot store.AssignmentSnapshot
+	deadline := time.After(10 * time.Second)
+	for {
+		var gotDrain bool
+		select {
+		case <-notifications:
+			drainedSnapshot, err = executorStore.GetShardAssignments(tc.Namespace)
+			require.NoError(t, err)
+			_, gotDrain = drainedSnapshot.DrainedShards[shardID]
+		case <-deadline:
+			t.Fatal("drain should notify the assignment subscribers")
+		}
+		if gotDrain {
+			break
+		}
+	}
+
+	// The assignment is read atomically with the drained set.
+	assignedShards := make([]string, 0)
+	for owner, shardIDs := range drainedSnapshot.ExecutorToShards {
+		if owner.ExecutorID == executorID {
+			assignedShards = append(assignedShards, shardIDs...)
+		}
+	}
+	assert.Equal(t, []string{shardID}, assignedShards)
+}
+
 // Draining must not leak across namespaces: the drained keyspace is per-namespace and
 // a prefix scan for one namespace must not observe another's keys.
 func TestDrainShardsIsolatedPerNamespace(t *testing.T) {
