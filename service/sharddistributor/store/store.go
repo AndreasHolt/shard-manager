@@ -26,16 +26,6 @@ var (
 	ErrExecutorNotRunning = fmt.Errorf("executor not running")
 )
 
-type ErrShardAlreadyAssigned struct {
-	ShardID    string
-	AssignedTo string
-	Metadata   map[string]string
-}
-
-func (e *ErrShardAlreadyAssigned) Error() string {
-	return fmt.Sprintf("shard %s is already assigned to %s", e.ShardID, e.AssignedTo)
-}
-
 // Txn represents a generic, backend-agnostic transaction.
 // It is used as a vehicle for the GuardFunc to operate on.
 type Txn interface{}
@@ -81,9 +71,6 @@ type Store interface {
 	// RecordShardStatisticsBatch records complete statistics maps for multiple
 	// executors.
 	RecordShardStatisticsBatch(ctx context.Context, namespace string, updates []ExecutorShardStatistics) error
-
-	// AssignShard assigns a single shard to an executor within a namespace.
-	AssignShard(ctx context.Context, namespace string, shardID string, executorID string) error
 
 	// SubscribeToExecutorStatusChanges subscribes to changes of executors' status key within a namespace.
 	SubscribeToExecutorStatusChanges(ctx context.Context, namespace string) (<-chan int64, error)
