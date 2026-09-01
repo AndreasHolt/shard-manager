@@ -12,7 +12,6 @@ import (
 	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/etcdclient"
-	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store/etcd/etcdtypes"
 )
 
 type NamespaceToShards map[string]*namespaceShardToExecutor
@@ -71,14 +70,6 @@ func (s *ShardToExecutorCache) IsShardDrained(ctx context.Context, namespace, sh
 		return false, fmt.Errorf("get namespace shard to executor: %w", err)
 	}
 	return namespaceShardToExecutor.IsShardDrained(ctx, shardID)
-}
-
-func (s *ShardToExecutorCache) GetExecutorStatistics(ctx context.Context, namespace, executorID string) (map[string]etcdtypes.ShardStatistics, error) {
-	namespaceShardToExecutor, err := s.getNamespaceShardToExecutor(namespace)
-	if err != nil {
-		return nil, fmt.Errorf("get namespace shard to executor: %w", err)
-	}
-	return namespaceShardToExecutor.GetExecutorStatistics(ctx, executorID)
 }
 
 func (s *ShardToExecutorCache) GetExecutor(ctx context.Context, namespace, executorID string) (*store.ShardOwner, error) {
