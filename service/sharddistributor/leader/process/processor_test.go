@@ -683,7 +683,6 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	initialShardsPerExecutor := 50
-	moveBudgetProportion := 0.01
 	// With 100 shards total, a 1% move budget permits one shard move.
 	expectedMovedShards := 1
 
@@ -695,7 +694,7 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 			return time.Minute
 		},
 		MoveBudgetProportion: func(namespace string) float64 {
-			return moveBudgetProportion
+			return 0.01
 		},
 		HysteresisUpperBand: func(namespace string) float64 {
 			return 1.15
