@@ -486,12 +486,13 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return nil
 	}
 
+	oldAssignments := namespaceState.ShardAssignments
 	assignmentTime := p.timeSource.Now().UTC()
 	newAssignments, executorsWithChangedAssignments := p.getNewAssignmentsState(namespaceState, currentAssignments, assignmentTime)
 	shardStatisticsUpdatesForAssignmentChange, err := loadbalancer.PrepareAssignmentStatistics(
 		p.sdConfig,
 		p.namespaceCfg.Name,
-		namespaceState.ShardAssignments,
+		oldAssignments,
 		newAssignments,
 		namespaceState.ShardStats,
 		assignmentTime,
@@ -695,6 +696,7 @@ func applyMoves(currentAssignments map[string][]string, moves []plan.Move) error
 	return nil
 }
 
+// getNewAssignmentsState builds a new assignment map without modifying namespaceState.
 func (p *namespaceProcessor) getNewAssignmentsState(
 	namespaceState *store.NamespaceState,
 	currentAssignments map[string][]string,
