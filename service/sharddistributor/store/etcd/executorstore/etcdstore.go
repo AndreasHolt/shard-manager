@@ -48,13 +48,6 @@ type executorStoreImpl struct {
 	metricsClient metrics.Client
 }
 
-// shardStatisticsUpdate holds the staged statistics for a shard so we can write them
-// to etcd after the main AssignShards transaction commits.
-type shardStatisticsUpdate struct {
-	executorID string
-	stats      map[string]etcdtypes.ShardStatistics
-}
-
 // ExecutorStoreParams defines the dependencies for the etcd store, for use with fx.
 type ExecutorStoreParams struct {
 	fx.In
@@ -268,11 +261,8 @@ func (s *executorStoreImpl) GetState(ctx context.Context, namespace string) (*st
 			assignedStates[executorID] = *executorData.AssignedState.ToAssignedState()
 		}
 
-		// Only load shard statistics if the load balancing mode requires it
-		if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
-			for shardID, stat := range executorData.Statistics {
-				shardStats[shardID] = *stat.ToShardStatistics()
-			}
+		for shardID, statistics := range executorData.Statistics {
+			shardStats[shardID] = *statistics.ToShardStatistics()
 		}
 	}
 
@@ -392,31 +382,11 @@ func (s *executorStoreImpl) hasExecutorStatusChanged(watchResp clientv3.WatchRes
 	return false
 }
 
-func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, request store.AssignShardsRequest, guard store.GuardFunc) (err error) {
+func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, request store.AssignShardsRequest, guard store.GuardFunc) error {
 	var ops []clientv3.Op
 	var opsElse []clientv3.Op
 	var comparisons []clientv3.Cmp
 	comparisonMaps := make(map[string]int64)
-
-	// TODO: Should be extracted to a higher level so that statistics updates are prepared
-	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
-		statsUpdates, errUpdate := s.prepareShardStatisticsUpdates(ctx, namespace, request.NewState.ShardAssignments)
-		if errUpdate != nil {
-			return fmt.Errorf("prepare shard statistics: %w", errUpdate)
-		}
-
-		defer func() {
-			// Apply the shard statistics updates after the main transaction commits.
-			// Only apply if there was no error in the main transaction.
-			if err != nil {
-				return
-			}
-			if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
-				s.logger.Error("failed to apply shard statistics updates", tag.Error(updateErr))
-				err = updateErr
-			}
-		}()
-	}
 
 	// 1. Prepare operations to delete stale executors and add comparisons to ensure they haven't been modified
 	for executorID, expectedModRevision := range request.ExecutorsToDelete {
@@ -944,114 +914,35 @@ func (s *executorStoreImpl) GetDrainedShards(ctx context.Context, namespace stri
 	return slices.Sorted(maps.Keys(drained)), nil
 }
 
-// prepareShardStatisticsUpdates calculates the necessary changes to shard statistics based on a new shard assignment plan.
-// It determines which shards have moved between executors, which are new, and prepares a list of updates
-// that remove a moved shard's stats from its old owner and add them to its new owner, recording the time of the move.
-func (s *executorStoreImpl) prepareShardStatisticsUpdates(ctx context.Context, namespace string, newAssignments map[string]store.AssignedState) ([]shardStatisticsUpdate, error) {
-	// statsUpdatesByExecutor contains per-executor stats maps that will be written back.
-	statsUpdatesByExecutor := make(map[string]map[string]etcdtypes.ShardStatistics)
-
-	for newOwnerID, state := range newAssignments {
-		for shardID := range state.AssignedShards {
-			now := s.timeSource.Now().UTC()
-
-			oldOwner, err := s.shardCache.GetShardOwner(ctx, namespace, shardID)
-			if err != nil {
-				if errors.Is(err, store.ErrShardNotFound) {
-					oldOwner = nil
-				} else {
-					return nil, fmt.Errorf("lookup cached shard owner: %w", err)
-				}
-			}
-			if oldOwner != nil && oldOwner.ExecutorID == newOwnerID {
-				// Already owned by the target, nothing to move.
-				continue
-			}
-
-			// Leave stats at zero value: unmeasured until the first heartbeat sets
-			// LastUpdateTime, and not on move cooldown until reassigned from a prior owner.
-			var newStatForShard etcdtypes.ShardStatistics
-
-			if oldOwner != nil {
-				previousStats, ok := statsUpdatesByExecutor[oldOwner.ExecutorID]
-				if !ok {
-					previousStats, err = s.loadStatsForUpdate(ctx, namespace, oldOwner.ExecutorID)
-					if err != nil {
-						return nil, err
-					}
-					statsUpdatesByExecutor[oldOwner.ExecutorID] = previousStats
-				}
-				if previousStatForShard, ok := previousStats[shardID]; ok {
-					// Carry over the accumulated load and update the move time.
-					newStatForShard = previousStatForShard
-					newStatForShard.LastMoveTime = etcdtypes.Time(now)
-					delete(previousStats, shardID)
-				}
-			}
-
-			newOwnerStats, ok := statsUpdatesByExecutor[newOwnerID]
-			if !ok {
-				newOwnerStats, err = s.loadStatsForUpdate(ctx, namespace, newOwnerID)
-				if err != nil {
-					return nil, err
-				}
-				statsUpdatesByExecutor[newOwnerID] = newOwnerStats
-			}
-			newOwnerStats[shardID] = newStatForShard
-		}
-	}
-
-	shardStatisticsUpdates := make([]shardStatisticsUpdate, 0, len(statsUpdatesByExecutor))
-	for executorID, stats := range statsUpdatesByExecutor {
-		shardStatisticsUpdates = append(shardStatisticsUpdates, shardStatisticsUpdate{
-			executorID: executorID,
-			stats:      stats,
-		})
-	}
-	return shardStatisticsUpdates, nil
-}
-
-// loadStatsForUpdate loads the current stats for executorID, or returns an empty map
-// when no stats have been recorded for that executor yet.
-func (s *executorStoreImpl) loadStatsForUpdate(ctx context.Context, namespace, executorID string) (map[string]etcdtypes.ShardStatistics, error) {
-	stats, err := s.shardCache.GetExecutorStatistics(ctx, namespace, executorID)
-	if err != nil {
-		if !errors.Is(err, store.ErrExecutorNotFound) {
-			return nil, fmt.Errorf("get shard statistics for executor %s: %w", executorID, err)
-		}
-		stats = make(map[string]etcdtypes.ShardStatistics)
-	}
-
-	return stats, nil
-}
-
-// applyShardStatisticsUpdates updates shard statistics.
-func (s *executorStoreImpl) applyShardStatisticsUpdates(ctx context.Context, namespace string, updates []shardStatisticsUpdate) error {
+// RecordShardStatisticsBatch records complete statistics maps for multiple
+// executors.
+func (s *executorStoreImpl) RecordShardStatisticsBatch(ctx context.Context, namespace string, updates []store.ExecutorShardStatistics) error {
 	var multiError error
 	for _, update := range updates {
-		statsKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, update.executorID, etcdkeys.ExecutorShardStatisticsKey)
+		statsKey := etcdkeys.BuildExecutorKey(s.prefix, namespace, update.ExecutorID, etcdkeys.ExecutorShardStatisticsKey)
 
-		if len(update.stats) == 0 {
+		if len(update.Statistics) == 0 {
 			if _, err := s.client.Delete(ctx, statsKey); err != nil {
-				multiError = errors.Join(multiError, fmt.Errorf("failed to delete executor shard statistics: %w", err))
+				multiError = errors.Join(multiError, fmt.Errorf("failed to delete shard statistics for executor %s: %w", update.ExecutorID, err))
 			}
 			continue
 		}
 
-		payload, err := json.Marshal(update.stats)
+		storedStatistics := etcdtypes.FromShardStatisticsMap(update.Statistics)
+		payload, err := json.Marshal(storedStatistics)
 		if err != nil {
-			multiError = errors.Join(multiError, fmt.Errorf("failed to marshal executor shard statistics: %w", err))
+			multiError = errors.Join(multiError, fmt.Errorf("failed to marshal shard statistics for executor %s: %w", update.ExecutorID, err))
 			continue
 		}
 
 		compressedPayload, err := s.recordWriter.Write(payload)
 		if err != nil {
-			multiError = errors.Join(multiError, fmt.Errorf("failed to compress executor shard statistics: %w", err))
+			multiError = errors.Join(multiError, fmt.Errorf("failed to compress shard statistics for executor %s: %w", update.ExecutorID, err))
 			continue
 		}
 
 		if _, err := s.client.Put(ctx, statsKey, string(compressedPayload)); err != nil {
-			multiError = errors.Join(multiError, fmt.Errorf("failed to put executor shard statistics: %w", err))
+			multiError = errors.Join(multiError, fmt.Errorf("failed to put shard statistics for executor %s: %w", update.ExecutorID, err))
 		}
 	}
 	return multiError

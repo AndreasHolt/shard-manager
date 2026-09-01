@@ -73,10 +73,14 @@ type Store interface {
 	// shard statistics, and shard assignments.
 	GetState(ctx context.Context, namespace string) (*NamespaceState, error)
 
-	// AssignShards assigns multiple shards to executors within a namespace.
-	// It also updates shard statistics and deletes specified executors
+	// AssignShards assigns multiple shards to executors within a namespace and
+	// deletes specified executors.
 	// The operation is atomic and guarded by the provided GuardFunc.
 	AssignShards(ctx context.Context, namespace string, request AssignShardsRequest, guard GuardFunc) error
+
+	// RecordShardStatisticsBatch records complete statistics maps for multiple
+	// executors.
+	RecordShardStatisticsBatch(ctx context.Context, namespace string, updates []ExecutorShardStatistics) error
 
 	// AssignShard assigns a single shard to an executor within a namespace.
 	AssignShard(ctx context.Context, namespace string, shardID string, executorID string) error

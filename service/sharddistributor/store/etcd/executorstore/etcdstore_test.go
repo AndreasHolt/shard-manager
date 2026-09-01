@@ -775,6 +775,55 @@ func TestShardStatisticsPersistence(t *testing.T) {
 	require.Contains(t, nsState.ShardAssignments[executorID].AssignedShards, shardID)
 }
 
+func TestRecordShardStatisticsBatch(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	firstExecutorID := "executor-1"
+	secondExecutorID := "executor-2"
+	now := time.Now().UTC()
+
+	// 1. Register the executors whose statistics will be recorded.
+	err := executorStore.RecordHeartbeat(ctx, tc.Namespace, firstExecutorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE})
+	require.NoError(t, err)
+	err = executorStore.RecordHeartbeat(ctx, tc.Namespace, secondExecutorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE})
+	require.NoError(t, err)
+
+	// 2. Build the complete statistics maps. The store persists these values without
+	// interpreting why a shard appears under a particular executor.
+	firstStatistics := map[string]store.ShardStatistics{
+		"shard-1": {SmoothedLoad: 3},
+	}
+	secondStatistics := map[string]store.ShardStatistics{
+		"shard-2": {
+			SmoothedLoad:   12.5,
+			LastUpdateTime: now.Add(-time.Minute),
+			LastMoveTime:   now,
+		},
+		"shard-3": {SmoothedLoad: 7},
+	}
+	updates := []store.ExecutorShardStatistics{
+		{ExecutorID: firstExecutorID, Statistics: firstStatistics},
+		{ExecutorID: secondExecutorID, Statistics: secondStatistics},
+	}
+
+	// 3. Record both executor maps in one batch.
+	err = executorStore.RecordShardStatisticsBatch(ctx, tc.Namespace, updates)
+	require.NoError(t, err)
+
+	// 4. Verify each complete map was persisted unchanged.
+	firstExecutorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, firstExecutorID)
+	require.NoError(t, err)
+	assert.Equal(t, firstStatistics, firstExecutorState.Statistics)
+
+	secondExecutorState, err := executorStore.GetExecutorState(ctx, tc.Namespace, secondExecutorID)
+	require.NoError(t, err)
+	assert.Equal(t, secondStatistics, secondExecutorState.Statistics)
+}
+
 // TestGetShardStatisticsForMissingShard verifies GetState does not report statistics for unknown shards.
 func TestGetShardStatisticsForMissingShard(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)
