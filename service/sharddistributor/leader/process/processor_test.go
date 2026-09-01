@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/cadence-workflow/shard-manager/common"
@@ -681,6 +682,10 @@ func TestRebalanceShards_AppliesNaiveLoadBalancingPlan(t *testing.T) {
 func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
+	initialShardsPerExecutor := 50
+	// With 100 shards total, a 1% move budget permits one shard move.
+	expectedMovedShards := 1
+
 	mocks.sdConfig.LoadBalancingMode = func(namespace string) string {
 		return config.LoadBalancingModeGREEDY
 	}
@@ -702,6 +707,8 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		},
 	}
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	logger, logs := testlogger.NewObserved(t)
+	processor.logger = logger
 
 	now := mocks.timeSource.Now()
 	// exec-1 has higher smoothed load, so greedy should move one shard to exec-2.
@@ -714,13 +721,13 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		"exec-2": {AssignedShards: make(map[string]*types.ShardAssignment)},
 	}
 	shardStats := make(map[string]store.ShardStatistics)
-	for i := range 50 {
+	for i := range initialShardsPerExecutor {
 		shardID := "a-" + strconv.Itoa(i)
 		assignments["exec-1"].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 3.0, LastUpdateTime: now}
 		mocks.store.EXPECT().GetShardOwner(gomock.Any(), mocks.cfg.Name, shardID).Return(&store.ShardOwner{ExecutorID: "exec-1"}, nil).AnyTimes()
 	}
-	for i := range 50 {
+	for i := range initialShardsPerExecutor {
 		shardID := "b-" + strconv.Itoa(i)
 		assignments["exec-2"].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1.0, LastUpdateTime: now}
@@ -735,14 +742,28 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, 49)
-			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, 51)
+			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, initialShardsPerExecutor-expectedMovedShards)
+			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, initialShardsPerExecutor+expectedMovedShards)
 			return nil
+		},
+	)
+	mocks.store.EXPECT().RecordShardStatisticsBatch(gomock.Any(), mocks.cfg.Name, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, updates []store.ExecutorShardStatistics) error {
+			updatesByExecutor := make(map[string]map[string]store.ShardStatistics, len(updates))
+			for _, update := range updates {
+				updatesByExecutor[update.ExecutorID] = update.Statistics
+			}
+			assert.Len(t, updatesByExecutor["exec-1"], initialShardsPerExecutor-expectedMovedShards)
+			assert.Len(t, updatesByExecutor["exec-2"], initialShardsPerExecutor+expectedMovedShards)
+			return assert.AnError
 		},
 	)
 
 	err := processor.rebalanceShards(context.Background())
 	require.NoError(t, err)
+	entries := logs.FilterMessage("failed to record shard statistics after assignment").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, zapcore.WarnLevel, entries[0].Level)
 }
 
 func TestGetShards_Utility(t *testing.T) {
@@ -1214,15 +1235,15 @@ func TestGetNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
 	mocks.store.EXPECT().GetShardOwner(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, store.ErrShardNotFound).AnyTimes()
 
-	newState, changedExecutors := processor.getNewAssignmentsState(namespaceState, currentAssignments)
+	newAssignments, executorsWithChangedAssignments := processor.getNewAssignmentsState(namespaceState, currentAssignments, now)
 
-	assert.Len(t, newState, 3)
-	assert.Equal(t, map[string]struct{}{"exec-2": {}, "exec-3": {}}, changedExecutors)
-	assert.Equal(t, oldTime, newState["exec-1"].LastUpdated)
-	assert.Equal(t, now, newState["exec-2"].LastUpdated)
-	assert.Equal(t, int64(10), newState["exec-1"].ModRevision)
-	assert.Equal(t, int64(20), newState["exec-2"].ModRevision)
-	assert.Equal(t, int64(0), newState["exec-3"].ModRevision)
+	assert.Len(t, newAssignments, 3)
+	assert.Equal(t, map[string]struct{}{"exec-2": {}, "exec-3": {}}, executorsWithChangedAssignments)
+	assert.Equal(t, oldTime, newAssignments["exec-1"].LastUpdated)
+	assert.Equal(t, now, newAssignments["exec-2"].LastUpdated)
+	assert.Equal(t, int64(10), newAssignments["exec-1"].ModRevision)
+	assert.Equal(t, int64(20), newAssignments["exec-2"].ModRevision)
+	assert.Equal(t, int64(0), newAssignments["exec-3"].ModRevision)
 }
 
 func TestEmitExecutorMetric(t *testing.T) {

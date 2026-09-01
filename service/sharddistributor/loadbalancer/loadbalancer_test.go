@@ -147,3 +147,69 @@ func TestPrepareShardStatisticsSkipsNaiveMode(t *testing.T) {
 	assert.False(t, shouldWrite)
 	assert.Nil(t, got)
 }
+
+func TestPrepareAssignmentStatisticsDispatch(t *testing.T) {
+	tests := []struct {
+		name            string
+		mode            string
+		expectedUpdates []store.ExecutorShardStatistics
+		expectError     bool
+	}{
+		{
+			name: "naive mode skips assignment statistics",
+			mode: config.LoadBalancingModeNAIVE,
+		},
+		{
+			name: "greedy mode initializes statistics for a new shard",
+			mode: config.LoadBalancingModeGREEDY,
+			expectedUpdates: []store.ExecutorShardStatistics{
+				{
+					ExecutorID: "executor-1",
+					Statistics: map[string]store.ShardStatistics{
+						"shard-1": {},
+					},
+				},
+			},
+		},
+		{
+			name:        "unsupported mode returns an error",
+			mode:        config.LoadBalancingModeINVALID,
+			expectError: true,
+		},
+	}
+	// With no previous assignment or statistics, greedy treats shard-1 as newly
+	// assigned and records a zero value statistic for executor-1.
+	newAssignments := map[string]store.AssignedState{
+		"executor-1": {
+			AssignedShards: map[string]*types.ShardAssignment{
+				"shard-1": {Status: types.AssignmentStatusREADY},
+			},
+		},
+	}
+	now := time.Now().UTC()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				LoadBalancingMode: func(string) string { return tt.mode },
+			}
+
+			updates, err := PrepareAssignmentStatistics(
+				cfg,
+				"test-namespace",
+				nil,
+				newAssignments,
+				nil,
+				now,
+			)
+
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Nil(t, updates)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedUpdates, updates)
+		})
+	}
+}

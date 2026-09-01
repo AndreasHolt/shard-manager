@@ -163,6 +163,16 @@ func (c *meteredStore) RecordShardStatistics(ctx context.Context, namespace stri
 	return
 }
 
+func (c *meteredStore) RecordShardStatisticsBatch(ctx context.Context, namespace string, updates []store.ExecutorShardStatistics) (err error) {
+	op := func() error {
+		err = c.wrapped.RecordShardStatisticsBatch(ctx, namespace, updates)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreRecordShardStatisticsBatchScope, op, metrics.NamespaceTag(namespace))
+	return
+}
+
 func (c *meteredStore) ResetNamespace(ctx context.Context, namespace string) (i1 int64, err error) {
 	op := func() error {
 		i1, err = c.wrapped.ResetNamespace(ctx, namespace)

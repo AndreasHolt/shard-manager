@@ -110,3 +110,27 @@ func PrepareShardStatistics(
 		return nil, false, fmt.Errorf("unsupported load balancing mode: %s", mode)
 	}
 }
+
+// PrepareAssignmentStatistics prepares statistics updates for an assignment change.
+func PrepareAssignmentStatistics(
+	cfg *config.Config,
+	namespace string,
+	previousAssignments map[string]store.AssignedState,
+	newAssignments map[string]store.AssignedState,
+	previousStatistics map[string]store.ShardStatistics,
+	assignmentTime time.Time,
+) ([]store.ExecutorShardStatistics, error) {
+	switch mode := cfg.GetLoadBalancingMode(namespace); mode {
+	case types.LoadBalancingModeGREEDY:
+		return greedy.PrepareAssignmentStatistics(
+			previousAssignments,
+			newAssignments,
+			previousStatistics,
+			assignmentTime,
+		), nil
+	case types.LoadBalancingModeNAIVE:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unsupported load balancing mode: %s", mode)
+	}
+}
