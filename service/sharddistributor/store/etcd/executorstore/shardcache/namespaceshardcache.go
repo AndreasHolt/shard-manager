@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +46,7 @@ type namespaceShardToExecutor struct {
 
 	shardToExecutor  map[string]*store.ShardOwner   // shardID -> shardOwner
 	shardOwners      map[string]*store.ShardOwner   // executorID -> shardOwner
-	executorState    map[*store.ShardOwner][]string // executor -> shardIDs
+	executorToShards map[*store.ShardOwner][]string // executor -> shardIDs
 	executorRevision map[string]int64
 	drainedShards    map[string]struct{} // set of shard IDs marked drained
 	lastRevision     int64               // etcd store revision of the last applied snapshot
@@ -91,7 +92,7 @@ func newNamespaceExecutorStatistics() *namespaceExecutorStatistics {
 func newNamespaceShardToExecutor(etcdPrefix, namespace string, client etcdclient.Client, stopCh chan struct{}, logger log.Logger, timeSource clock.TimeSource, metricsClient metrics.Client) (*namespaceShardToExecutor, error) {
 	return &namespaceShardToExecutor{
 		shardToExecutor:     make(map[string]*store.ShardOwner),
-		executorState:       make(map[*store.ShardOwner][]string),
+		executorToShards:    make(map[*store.ShardOwner][]string),
 		executorRevision:    make(map[string]int64),
 		shardOwners:         make(map[string]*store.ShardOwner),
 		drainedShards:       make(map[string]struct{}),
@@ -104,7 +105,7 @@ func newNamespaceShardToExecutor(etcdPrefix, namespace string, client etcdclient
 		logger:              logger.WithTags(tag.ShardNamespace(namespace)),
 		client:              client,
 		timeSource:          timeSource,
-		pubSub:              newExecutorStatePubSub(logger, namespace, timeSource),
+		pubSub:              newExecutorStatePubSub(logger, namespace),
 		executorStatistics:  newNamespaceExecutorStatistics(),
 		metricsClient:       metricsClient,
 		refreshTimeout:      refreshOperationTimeout,
@@ -253,9 +254,8 @@ func (n *namespaceShardToExecutor) fetchAndCacheExecutorStatistics(ctx context.C
 	return nil
 }
 
-func (n *namespaceShardToExecutor) Subscribe(ctx context.Context) (<-chan map[*store.ShardOwner][]string, func()) {
-	subCh, unSub := n.pubSub.subscribe(n.getExecutorState)
-	return subCh, unSub
+func (n *namespaceShardToExecutor) Subscribe() (<-chan struct{}, func()) {
+	return n.pubSub.subscribe()
 }
 
 func (n *namespaceShardToExecutor) namespaceRefreshLoop() {
@@ -444,21 +444,24 @@ func (n *namespaceShardToExecutor) refresh(ctx context.Context) error {
 	}
 
 	if updated {
-		n.pubSub.publish(n.getExecutorState)
+		n.pubSub.notifySubscribers()
 	}
 	return nil
 }
 
-func (n *namespaceShardToExecutor) getExecutorState() map[*store.ShardOwner][]string {
+func (n *namespaceShardToExecutor) GetShardAssignments() store.AssignmentSnapshot {
 	n.RLock()
 	defer n.RUnlock()
-	executorState := make(map[*store.ShardOwner][]string)
-	for executor, shardIDs := range n.executorState {
-		executorState[executor] = make([]string, len(shardIDs))
-		copy(executorState[executor], shardIDs)
+
+	shardAssignments := make(map[*store.ShardOwner][]string, len(n.executorToShards))
+	for executor, shardIDs := range n.executorToShards {
+		shardAssignments[executor] = slices.Clone(shardIDs)
 	}
 
-	return executorState
+	return store.AssignmentSnapshot{
+		ExecutorToShards: shardAssignments,
+		DrainedShards:    maps.Clone(n.drainedShards),
+	}
 }
 
 // refreshNamespaceState reads every keyspace the cache tracks in one range read, so both
@@ -557,7 +560,7 @@ func (n *namespaceShardToExecutor) replaceNamespaceState(
 
 	n.lastRevision = storeRevision
 	n.shardToExecutor = shardToExecutor
-	n.executorState = executorState
+	n.executorToShards = executorState
 	n.executorRevision = executorRevision
 	n.shardOwners = shardOwners
 	n.drainedShards = drainedShards

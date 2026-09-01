@@ -445,6 +445,13 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 
 	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopNumRebalancedShards, int64(len(shardsToReassign)))
 
+	drainedAssignedShards := findDrainedAssignedShards(namespaceState, activeExecutors)
+	if len(drainedAssignedShards) > 0 {
+		p.logger.Info("Dropping drained shards from executors", tag.Dynamic("drained-shards", drainedAssignedShards))
+	}
+	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopDroppedDrainedShards, int64(len(drainedAssignedShards)))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorDrainedShards, float64(len(namespaceState.DrainedShards)))
+
 	// If there are deleted shards or stale executors, the distribution has changed.
 	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
 	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
@@ -464,12 +471,16 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	if err := applyMoves(currentAssignments, loadBalanceMoves); err != nil {
 		return fmt.Errorf("apply load balance moves: %w", err)
 	}
-	isRebalancedByShardLoad := len(loadBalanceMoves) > 0
 
 	p.emitExecutorMetric(namespaceState, metricsLoopScope)
 	loadbalancer.EmitAssignmentImbalanceMetrics(p.sdConfig, p.namespaceCfg.Name, metricsLoopScope, currentAssignments, namespaceState)
 
-	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
+	distributionChanged := len(deletedShards) > 0 ||
+		len(staleExecutors) > 0 ||
+		len(loadBalanceMoves) > 0 ||
+		len(drainedAssignedShards) > 0 ||
+		assignedToEmptyExecutors ||
+		updatedAssignments
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
@@ -573,15 +584,36 @@ func (p *namespaceProcessor) findDeletedShards(namespaceState *store.NamespaceSt
 	return deletedShards
 }
 
+// findDrainedAssignedShards returns the unique drained shards that are still
+// assigned to given executors
+func findDrainedAssignedShards(namespaceState *store.NamespaceState, executors []string) []string {
+	if len(namespaceState.DrainedShards) == 0 {
+		return nil
+	}
+
+	drainedAssigned := make(map[string]struct{})
+	for _, executorID := range executors {
+		for shardID := range namespaceState.ShardAssignments[executorID].AssignedShards {
+			if namespaceState.IsShardDrained(shardID) {
+				drainedAssigned[shardID] = struct{}{}
+			}
+		}
+	}
+	return slices.Collect(maps.Keys(drainedAssigned))
+}
+
 func (p *namespaceProcessor) findShardsToReassign(
 	activeExecutors []string,
 	namespaceState *store.NamespaceState,
 	deletedShards map[string]store.ShardState,
 	staleExecutors map[string]int64,
 ) ([]string, map[string][]string) {
-	allShards := make(map[string]struct{})
+	allAvailableShards := make(map[string]struct{})
 	for _, shardID := range getShards(p.namespaceCfg, namespaceState, deletedShards) {
-		allShards[shardID] = struct{}{}
+		if namespaceState.IsShardDrained(shardID) {
+			continue
+		}
+		allAvailableShards[shardID] = struct{}{}
 	}
 
 	shardsToReassign := make([]string, 0)
@@ -596,8 +628,8 @@ func (p *namespaceProcessor) findShardsToReassign(
 		_, isStale := staleExecutors[executorID]
 
 		for shardID := range state.AssignedShards {
-			if _, ok := allShards[shardID]; ok {
-				delete(allShards, shardID)
+			if _, ok := allAvailableShards[shardID]; ok {
+				delete(allAvailableShards, shardID)
 				// If executor is active AND not stale, keep the assignment
 				if isActive && !isStale {
 					currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
@@ -609,7 +641,7 @@ func (p *namespaceProcessor) findShardsToReassign(
 		}
 	}
 
-	for shardID := range allShards {
+	for shardID := range allAvailableShards {
 		shardsToReassign = append(shardsToReassign, shardID)
 	}
 	return shardsToReassign, currentAssignments
@@ -727,7 +759,7 @@ func (p *namespaceProcessor) newHandoverStats(
 
 	// Fetch previous shard owners from cache
 	prevExecutor, err := p.shardStore.GetShardOwner(context.Background(), p.namespaceCfg.Name, shardID)
-	if err != nil && !errors.Is(err, store.ErrShardNotFound) {
+	if err != nil && !errors.Is(err, store.ErrShardNotFound) && !errors.Is(err, store.ErrShardDrained) {
 		logger.Warn("failed to get shard owner for shard statistic", tag.Error(err))
 		return nil
 	}

@@ -18,12 +18,6 @@ persistence:
         hosts: "127.0.0.1"
         keyspace: "cadence_visibility"
 
-ringpop:
-  name: cadence
-  bootstrapMode: hosts
-  bootstrapHosts: [ "127.0.0.1:7933", "127.0.0.1:7934", "127.0.0.1:7935" ]
-  maxJoinDuration: 30s
-
 rpc:
   port: 7941
   grpcPort: 7943
@@ -108,14 +102,6 @@ shardDistribution:
       type: fixed
       shardNum: 32
     - name: shard-distributor-canary-ephemeral
-      type: ephemeral
-    - name: test-local-passthrough
-      type: fixed
-    - name: test-local-passthrough-shadow
-      type: ephemeral
-    - name: test-distributed-passthrough
-      type: fixed
-    - name: test-external-assignment
       type: ephemeral
     - name: cadence-matching-dev
       type: ephemeral

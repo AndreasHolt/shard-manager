@@ -1513,10 +1513,11 @@ const (
 	ShardDistributorStoreDeleteExecutorsScope
 	ShardDistributorStoreGetShardStatsScope
 	ShardDistributorStoreDeleteShardStatsScope
-	ShardDistributorStoreGetHeartbeatScope
+	ShardDistributorStoreGetExecutorStateScope
 	ShardDistributorStoreGetExecutorScope
 	ShardDistributorStoreGetStateScope
 	ShardDistributorStoreRecordHeartbeatScope
+	ShardDistributorStoreRecordShardStatisticsScope
 	ShardDistributorStoreSubscribeToExecutorStatusChangesScope
 	ShardDistributorStoreSubscribeToAssignmentChangesScope
 	ShardDistributorStoreDeleteAssignedStatesScope
@@ -2235,10 +2236,11 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		ShardDistributorStoreDeleteExecutorsScope:                  {operation: "StoreDeleteExecutors"},
 		ShardDistributorStoreGetShardStatsScope:                    {operation: "StoreGetShardStats"},
 		ShardDistributorStoreDeleteShardStatsScope:                 {operation: "StoreDeleteShardStats"},
-		ShardDistributorStoreGetHeartbeatScope:                     {operation: "StoreGetHeartbeat"},
+		ShardDistributorStoreGetExecutorStateScope:                 {operation: "StoreGetExecutorState"},
 		ShardDistributorStoreGetExecutorScope:                      {operation: "StoreGetExecutor"},
 		ShardDistributorStoreGetStateScope:                         {operation: "StoreGetState"},
 		ShardDistributorStoreRecordHeartbeatScope:                  {operation: "StoreRecordHeartbeat"},
+		ShardDistributorStoreRecordShardStatisticsScope:            {operation: "StoreRecordShardStatistics"},
 		ShardDistributorStoreSubscribeToExecutorStatusChangesScope: {operation: "StoreSubscribeToExecutorStatusChanges"},
 		ShardDistributorStoreSubscribeToAssignmentChangesScope:     {operation: "StoreSubscribeToAssignmentChanges"},
 		ShardDistributorStoreDeleteAssignedStatesScope:             {operation: "StoreDeleteAssignedStates"},
@@ -3071,6 +3073,7 @@ const (
 	ShardDistributorMaxExecutorsPerShard
 
 	ShardDistributorStoreExecutorNotFound
+	ShardDistributorStoreShardStatisticsSkipped
 	ShardDistributorStoreFailuresPerNamespace
 	ShardDistributorStoreRequestsPerNamespace
 	ShardDistributorStoreLatencyHistogramPerNamespace
@@ -3093,6 +3096,10 @@ const (
 	ShardDistributorAssignLoopDeletedShards
 	// ShardDistributorAssignLoopMovedLoadMilli counts moved reported load in milli-load units to preserve fractional loads in an integer counter
 	ShardDistributorAssignLoopMovedLoadMilli
+	// ShardDistributorAssignLoopDroppedDrainedShards counts drained shards taken away from an executor in a rebalance cycle
+	ShardDistributorAssignLoopDroppedDrainedShards
+	// ShardDistributorDrainedShards tracks how many shards are currently drained in the namespace
+	ShardDistributorDrainedShards
 
 	// ShardDistributorAssignmentLoadMaxOverMean measures max/mean across executor reported loads
 	ShardDistributorAssignmentLoadMaxOverMean
@@ -3920,6 +3927,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorMaxExecutorsPerShard:       {metricName: "shard_distributor_max_executors_per_shard", metricType: Gauge},
 
 		ShardDistributorStoreExecutorNotFound:             {metricName: "shard_distributor_store_executor_not_found", metricType: Counter},
+		ShardDistributorStoreShardStatisticsSkipped:       {metricName: "shard_distributor_store_shard_statistics_skipped", metricType: Counter},
 		ShardDistributorStoreFailuresPerNamespace:         {metricName: "shard_distributor_store_failures_per_namespace", metricType: Counter},
 		ShardDistributorStoreRequestsPerNamespace:         {metricName: "shard_distributor_store_requests_per_namespace", metricType: Counter},
 		ShardDistributorStoreLatencyHistogramPerNamespace: {metricName: "shard_distributor_store_latency_histogram_per_namespace", metricType: Histogram, buckets: ShardDistributorExecutorStoreLatencyBuckets},
@@ -3933,6 +3941,9 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorAssignLoopLoadBasedMoves: {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
 		ShardDistributorAssignLoopDeletedShards:  {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
 		ShardDistributorAssignLoopMovedLoadMilli: {metricName: "shard_distributor_shard_assign_moved_load_milli", metricType: Counter},
+
+		ShardDistributorAssignLoopDroppedDrainedShards: {metricName: "shard_distributor_shard_assign_dropped_drained_shards", metricType: Counter},
+		ShardDistributorDrainedShards:                  {metricName: "shard_distributor_drained_shards", metricType: Gauge},
 
 		ShardDistributorAssignmentLoadMaxOverMean:         {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
 		ShardDistributorAssignmentLoadCV:                  {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
