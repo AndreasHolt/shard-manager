@@ -489,17 +489,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	oldAssignments := namespaceState.ShardAssignments
 	assignmentTime := p.timeSource.Now().UTC()
 	newAssignments, executorsWithChangedAssignments := p.getNewAssignmentsState(namespaceState, currentAssignments, assignmentTime)
-	shardStatisticsUpdatesForAssignmentChange, err := loadbalancer.PrepareAssignmentStatistics(
-		p.sdConfig,
-		p.namespaceCfg.Name,
-		oldAssignments,
-		newAssignments,
-		namespaceState.ShardStats,
-		assignmentTime,
-	)
-	if err != nil {
-		return fmt.Errorf("prepare assignment statistics: %w", err)
-	}
 
 	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 
@@ -516,7 +505,17 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("assign shards: %w", err)
 	}
 
-	if len(shardStatisticsUpdatesForAssignmentChange) > 0 {
+	shardStatisticsUpdatesForAssignmentChange, prepareStatisticsErr := loadbalancer.PrepareAssignmentStatistics(
+		p.sdConfig,
+		p.namespaceCfg.Name,
+		oldAssignments,
+		newAssignments,
+		namespaceState.ShardStats,
+		assignmentTime,
+	)
+	if prepareStatisticsErr != nil {
+		p.logger.Warn("failed to prepare shard statistics after assignment", tag.Error(prepareStatisticsErr))
+	} else if len(shardStatisticsUpdatesForAssignmentChange) > 0 {
 		recordStatisticsErr := p.shardStore.RecordShardStatisticsBatch(ctx, p.namespaceCfg.Name, shardStatisticsUpdatesForAssignmentChange)
 		if recordStatisticsErr != nil {
 			p.logger.Warn("failed to record shard statistics after assignment", tag.Error(recordStatisticsErr))
