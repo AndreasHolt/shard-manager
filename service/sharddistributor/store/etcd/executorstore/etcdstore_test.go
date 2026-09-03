@@ -327,8 +327,8 @@ func TestGetStateRecordsETCDRoundTripLatencyOnError(t *testing.T) {
 	testScope := tally.NewTestScope("test", nil)
 	metricsClient := metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
 
-	txn := &testTxn{
-		commit: func() (*clientv3.TxnResponse, error) {
+	txn := &trackingTxn{
+		commitFn: func(_ int) (*clientv3.TxnResponse, error) {
 			timeSource.Advance(roundTripTime)
 			return nil, assert.AnError
 		},
@@ -349,20 +349,8 @@ func TestGetStateRecordsETCDRoundTripLatencyOnError(t *testing.T) {
 	histograms := testScope.Snapshot().Histograms()
 	require.Contains(t, histograms, histogramName)
 	bucketCounts := histograms[histogramName].Durations()
+	// We assert that the simulated 50 ms duration landed in the expected bucket.
 	assert.Equal(t, int64(1), bucketCounts[roundTripTime])
-}
-
-type testTxn struct {
-	clientv3.Txn
-	commit func() (*clientv3.TxnResponse, error)
-}
-
-func (t *testTxn) Then(...clientv3.Op) clientv3.Txn {
-	return t
-}
-
-func (t *testTxn) Commit() (*clientv3.TxnResponse, error) {
-	return t.commit()
 }
 
 // TestAssignShards_WithRevisions tests the optimistic locking logic of AssignShards.
