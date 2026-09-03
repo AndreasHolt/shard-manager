@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/fx/fxtest"
@@ -314,6 +315,54 @@ func TestGetState(t *testing.T) {
 	require.Len(t, namespaceState.ShardAssignments, 2, "Should retrieve two assignment states")
 	assert.Contains(t, namespaceState.ShardAssignments[executorID1].AssignedShards, shardID1)
 	assert.Contains(t, namespaceState.ShardAssignments[executorID2].AssignedShards, shardID2)
+}
+
+func TestGetStateRecordsETCDRoundTripLatencyOnError(t *testing.T) {
+	namespace := "test_namespace"
+	histogramName := "test.shard_distributor_store_get_state_etcd_round_trip_latency+namespace=test_namespace,operation=StoreGetState"
+	roundTripTime := 50 * time.Millisecond
+	ctrl := gomock.NewController(t)
+	mockClient := etcdclient.NewMockClient(ctrl)
+	timeSource := clock.NewMockedTimeSource()
+	testScope := tally.NewTestScope("test", nil)
+	metricsClient := metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
+
+	txn := &testTxn{
+		commit: func() (*clientv3.TxnResponse, error) {
+			timeSource.Advance(roundTripTime)
+			return nil, assert.AnError
+		},
+	}
+	mockClient.EXPECT().Txn(gomock.Any()).Return(txn)
+
+	executorStore := &executorStoreImpl{
+		client:        mockClient,
+		prefix:        "test-prefix",
+		timeSource:    timeSource,
+		metricsClient: metricsClient,
+	}
+
+	state, err := executorStore.GetState(context.Background(), namespace)
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Nil(t, state)
+
+	histograms := testScope.Snapshot().Histograms()
+	require.Contains(t, histograms, histogramName)
+	bucketCounts := histograms[histogramName].Durations()
+	assert.Equal(t, int64(1), bucketCounts[roundTripTime])
+}
+
+type testTxn struct {
+	clientv3.Txn
+	commit func() (*clientv3.TxnResponse, error)
+}
+
+func (t *testTxn) Then(...clientv3.Op) clientv3.Txn {
+	return t
+}
+
+func (t *testTxn) Commit() (*clientv3.TxnResponse, error) {
+	return t.commit()
 }
 
 // TestAssignShards_WithRevisions tests the optimistic locking logic of AssignShards.
