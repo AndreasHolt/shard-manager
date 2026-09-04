@@ -3077,6 +3077,7 @@ const (
 	ShardDistributorStoreFailuresPerNamespace
 	ShardDistributorStoreRequestsPerNamespace
 	ShardDistributorStoreLatencyHistogramPerNamespace
+	ShardDistributorStoreGetStateETCDRoundTripLatency
 
 	// ShardDistributorShardAssignmentDistributionLatency measures the time taken between assignment of a shard
 	// and the time it is fully distributed to executors
@@ -3931,6 +3932,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorStoreFailuresPerNamespace:         {metricName: "shard_distributor_store_failures_per_namespace", metricType: Counter},
 		ShardDistributorStoreRequestsPerNamespace:         {metricName: "shard_distributor_store_requests_per_namespace", metricType: Counter},
 		ShardDistributorStoreLatencyHistogramPerNamespace: {metricName: "shard_distributor_store_latency_histogram_per_namespace", metricType: Histogram, buckets: ShardDistributorExecutorStoreLatencyBuckets},
+		ShardDistributorStoreGetStateETCDRoundTripLatency: {metricName: "shard_distributor_store_get_state_etcd_round_trip_latency", metricType: Histogram, buckets: ShardDistributorExecutorStoreLatencyBuckets},
 
 		ShardDistributorShardAssignmentDistributionLatency: {metricName: "shard_distributor_shard_assignment_distribution_latency", metricType: Histogram, buckets: ShardDistributorShardAssignmentLatencyBuckets},
 		ShardDistributorShardHandoverLatency:               {metricName: "shard_distributor_shard_handover_latency", metricType: Histogram, buckets: ShardDistributorShardAssignmentLatencyBuckets},

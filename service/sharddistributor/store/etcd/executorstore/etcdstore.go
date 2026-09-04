@@ -228,10 +228,17 @@ func (s *executorStoreImpl) GetState(ctx context.Context, namespace string) (*st
 	assignedStates := make(map[string]store.AssignedState)
 	shardStats := make(map[string]store.ShardStatistics)
 
-	txnResp, err := s.client.Txn(ctx).Then(
+	metricsScope := s.metricsClient.Scope(
+		metrics.ShardDistributorStoreGetStateScope,
+		metrics.NamespaceTag(namespace),
+	)
+	txn := s.client.Txn(ctx).Then(
 		clientv3.OpGet(etcdkeys.BuildExecutorsPrefix(s.prefix, namespace), clientv3.WithPrefix()),
 		clientv3.OpGet(etcdkeys.BuildDrainedShardsPrefix(s.prefix, namespace), clientv3.WithPrefix()),
-	).Commit()
+	)
+	start := s.timeSource.Now()
+	txnResp, err := txn.Commit()
+	metricsScope.RecordHistogramDuration(metrics.ShardDistributorStoreGetStateETCDRoundTripLatency, s.timeSource.Since(start))
 	if err != nil {
 		return nil, fmt.Errorf("get namespace state: %w", err)
 	}
