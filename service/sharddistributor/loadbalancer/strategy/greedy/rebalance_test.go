@@ -123,51 +123,37 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 	assert.False(t, slices.Contains(currentAssignments[execB], "hot"))
 }
 
-func TestFindBestShardForMove_MinimumLoad(t *testing.T) {
+func TestCollectEligibleShards(t *testing.T) {
 	now := time.Now().UTC()
-
 	for _, test := range []struct {
-		name      string
-		load      float64
-		wantFound bool
+		name                         string
+		stats                        store.ShardStatistics
+		missing, moved, wantEligible bool
+		cooldown                     time.Duration
 	}{
-		{name: "below minimum", load: minShardSmoothedLoadForMove - 0.001, wantFound: false},
-		{name: "at minimum", load: minShardSmoothedLoadForMove, wantFound: true},
+		{name: "below minimum", stats: store.ShardStatistics{SmoothedLoad: .001, LastUpdateTime: now}},
+		{name: "at minimum", stats: store.ShardStatistics{SmoothedLoad: minShardSmoothedLoadForMove, LastUpdateTime: now}, wantEligible: true},
+		{name: "missing statistics", missing: true},
+		{name: "unmeasured", stats: store.ShardStatistics{SmoothedLoad: 1}},
+		{name: "already moved", stats: store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now}, moved: true},
+		{name: "cooling down", stats: store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now, LastMoveTime: now}, cooldown: time.Minute},
+		{name: "cooldown elapsed", stats: store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now, LastMoveTime: now.Add(-time.Minute)}, cooldown: time.Minute, wantEligible: true},
+		{name: "cooldown disabled", stats: store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now, LastMoveTime: now}, wantEligible: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			const shardID = "shard"
-			assignments := map[string][]string{
-				"source":      {shardID},
-				"destination": {},
+			statistics := make(map[string]store.ShardStatistics)
+			if !test.missing {
+				statistics["shard"] = test.stats
 			}
-			state := &store.NamespaceState{
-				ShardStats: map[string]store.ShardStatistics{
-					shardID: {SmoothedLoad: test.load, LastUpdateTime: now},
-				},
+			moved := make(map[string]struct{})
+			if test.moved {
+				moved["shard"] = struct{}{}
 			}
-			executorLoads := map[string]float64{
-				"source":      1,
-				"destination": 0,
-			}
-
-			gotShard, gotIndex, found := findBestShardForMove(
-				assignments,
-				state,
-				"source",
-				"destination",
-				executorLoads,
-				map[string]struct{}{},
-				now,
-				0,
-			)
-
-			assert.Equal(t, test.wantFound, found)
-			if test.wantFound {
-				assert.Equal(t, shardID, gotShard)
-				assert.Equal(t, 0, gotIndex)
+			shards := collectEligibleShards([]string{"missing", "shard"}, statistics, moved, now, test.cooldown)
+			if test.wantEligible {
+				assert.Equal(t, []eligibleShard{{shardID: "shard", assignmentIndex: 1, load: test.stats.SmoothedLoad}}, shards)
 			} else {
-				assert.Empty(t, gotShard)
-				assert.Equal(t, -1, gotIndex)
+				assert.Empty(t, shards)
 			}
 		})
 	}
