@@ -487,7 +487,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 
 	previousOwnersByShard := namespaceState.ShardOwners()
 	assignmentTime := p.timeSource.Now().UTC()
-	newAssignments, executorsWithChangedAssignments := p.getNewAssignmentsState(namespaceState, currentAssignments, previousOwnersByShard, assignmentTime)
+	newAssignments, executorsWithChangedAssignments := p.buildNewAssignmentsState(namespaceState, currentAssignments, previousOwnersByShard, assignmentTime)
 
 	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 
@@ -694,8 +694,8 @@ func applyMoves(currentAssignments map[string][]string, moves []plan.Move) error
 	return nil
 }
 
-// getNewAssignmentsState builds a new assignment map without modifying namespaceState.
-func (p *namespaceProcessor) getNewAssignmentsState(
+// buildNewAssignmentsState builds a new assignment map without modifying namespaceState.
+func (p *namespaceProcessor) buildNewAssignmentsState(
 	namespaceState *store.NamespaceState,
 	currentAssignments map[string][]string,
 	previousOwnersByShard map[string]string,

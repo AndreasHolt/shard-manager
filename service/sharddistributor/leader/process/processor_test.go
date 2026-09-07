@@ -1167,7 +1167,7 @@ func TestBuildHandoverStats_MultipleShards(t *testing.T) {
 	}
 }
 
-func TestGetNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
+func TestBuildNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -1200,7 +1200,7 @@ func TestGetNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
 		"exec-3": {"shard-5"},            // new
 	}
 
-	newAssignments, executorsWithChangedAssignments := processor.getNewAssignmentsState(
+	newAssignments, executorsWithChangedAssignments := processor.buildNewAssignmentsState(
 		namespaceState,
 		currentAssignments,
 		namespaceState.ShardOwners(),
