@@ -967,63 +967,202 @@ func TestApplyMoves(t *testing.T) {
 	}
 }
 
-func TestGetNewAssignmentsState_HandoverStats(t *testing.T) {
-	for _, test := range []struct {
+func TestBuildHandoverStats(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	now := time.Now().UTC()
+	shardID := "shard-1"
+	newExecutorID := "exec-new"
+
+	type testCase struct {
 		name             string
 		previousOwner    string
-		previousStatus   types.ExecutorStatus
-		missingHeartbeat bool
-		drainedShard     bool
-		wantHandover     bool
-		wantType         types.HandoverType
-	}{
-		{name: "first assignment"},
-		{name: "same owner", previousOwner: "new"},
-		{name: "missing previous heartbeat", previousOwner: "old", missingHeartbeat: true},
-		{name: "drained shard", previousOwner: "old", previousStatus: types.ExecutorStatusACTIVE, drainedShard: true},
-		{name: "active previous owner", previousOwner: "old", previousStatus: types.ExecutorStatusACTIVE, wantHandover: true, wantType: types.HandoverTypeEMERGENCY},
-		{name: "draining previous owner", previousOwner: "old", previousStatus: types.ExecutorStatusDRAINING, wantHandover: true, wantType: types.HandoverTypeGRACEFUL},
-		{name: "drained previous owner", previousOwner: "old", previousStatus: types.ExecutorStatusDRAINED, wantHandover: true, wantType: types.HandoverTypeGRACEFUL},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
-			processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
-			now := mocks.timeSource.Now().UTC()
-			previousHeartbeat := now.Add(-time.Minute)
-			state := &store.NamespaceState{
-				Executors: make(map[string]store.HeartbeatState),
-				ShardAssignments: map[string]store.AssignedState{
-					"new": {AssignedShards: map[string]*types.ShardAssignment{"unchanged": {Status: types.AssignmentStatusREADY}}},
+		drained          bool
+		executors        map[string]store.HeartbeatState
+		expectShardStats *store.ShardHandoverStats // nil means expect no handover stats
+	}
+
+	testCases := []testCase{
+		{
+			name:             "no previous owner -> stat without handover",
+			executors:        map[string]store.HeartbeatState{},
+			expectShardStats: nil,
+		},
+		{
+			name:          "drained shard -> stat without handover",
+			previousOwner: "old-exec",
+			drained:       true,
+			executors: map[string]store.HeartbeatState{
+				"old-exec": {
+					Status:        types.ExecutorStatusACTIVE,
+					LastHeartbeat: now.Add(-10 * time.Second),
 				},
-				DrainedShards: make(map[string]struct{}),
+			},
+			expectShardStats: nil,
+		},
+		{
+			name:          "same executor as previous -> nil",
+			previousOwner: newExecutorID,
+			executors: map[string]store.HeartbeatState{
+				newExecutorID: {
+					Status:        types.ExecutorStatusACTIVE,
+					LastHeartbeat: now.Add(-10 * time.Second),
+				},
+			},
+			expectShardStats: nil,
+		},
+		{
+			name:             "prev executor different but heartbeat missing -> no handover",
+			previousOwner:    "old-exec",
+			executors:        map[string]store.HeartbeatState{},
+			expectShardStats: nil,
+		},
+		{
+			name:          "prev executor ACTIVE -> emergency handover",
+			previousOwner: "old-active",
+			executors: map[string]store.HeartbeatState{
+				"old-active": {
+					Status:        types.ExecutorStatusACTIVE,
+					LastHeartbeat: now.Add(-10 * time.Second),
+				},
+			},
+			expectShardStats: &store.ShardHandoverStats{
+				HandoverType:                      types.HandoverTypeEMERGENCY,
+				PreviousExecutorLastHeartbeatTime: now.Add(-10 * time.Second),
+			},
+		},
+		{
+			name:          "prev executor DRAINING -> graceful handover",
+			previousOwner: "old-draining",
+			executors: map[string]store.HeartbeatState{
+				"old-draining": {
+					Status:        types.ExecutorStatusDRAINING,
+					LastHeartbeat: now.Add(-10 * time.Second),
+				},
+			},
+			expectShardStats: &store.ShardHandoverStats{
+				HandoverType:                      types.HandoverTypeGRACEFUL,
+				PreviousExecutorLastHeartbeatTime: now.Add(-10 * time.Second),
+			},
+		},
+		{
+			name:          "prev executor DRAINED -> graceful handover",
+			previousOwner: "old-drained",
+			executors: map[string]store.HeartbeatState{
+				"old-drained": {
+					Status:        types.ExecutorStatusDRAINED,
+					LastHeartbeat: now.Add(-10 * time.Second),
+				},
+			},
+			expectShardStats: &store.ShardHandoverStats{
+				HandoverType:                      types.HandoverTypeGRACEFUL,
+				PreviousExecutorLastHeartbeatTime: now.Add(-10 * time.Second),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			previousOwners := make(map[string]string)
+			if tc.previousOwner != "" {
+				previousOwners[shardID] = tc.previousOwner
 			}
-			if test.previousOwner != "" {
-				assigned := state.ShardAssignments[test.previousOwner]
-				if assigned.AssignedShards == nil {
-					assigned.AssignedShards = make(map[string]*types.ShardAssignment)
-				}
-				assigned.AssignedShards["shard"] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
-				state.ShardAssignments[test.previousOwner] = assigned
-				if !test.missingHeartbeat {
-					state.Executors[test.previousOwner] = store.HeartbeatState{Status: test.previousStatus, LastHeartbeat: previousHeartbeat}
-				}
+			drainedShards := make(map[string]struct{})
+			if tc.drained {
+				drainedShards[shardID] = struct{}{}
 			}
-			if test.drainedShard {
-				state.DrainedShards["shard"] = struct{}{}
+
+			stats := processor.buildHandoverStats(
+				&store.NamespaceState{Executors: tc.executors, DrainedShards: drainedShards},
+				previousOwners,
+				newExecutorID,
+				[]string{shardID},
+			)
+			stat, ok := stats[shardID]
+			if tc.expectShardStats == nil {
+				require.False(t, ok)
+				return
 			}
-			currentAssignments := map[string][]string{"new": {"shard", "fresh", "unchanged"}, "old": {}}
-			mocks.store.EXPECT().GetShardOwner(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-			newAssignments, _ := processor.getNewAssignmentsState(state, currentAssignments, state.ShardOwners(), now)
-			want := make(map[string]store.ShardHandoverStats)
-			if test.wantHandover {
-				want["shard"] = store.ShardHandoverStats{HandoverType: test.wantType, PreviousExecutorLastHeartbeatTime: previousHeartbeat}
+			require.True(t, ok)
+			require.Equal(t, *tc.expectShardStats, stat)
+		})
+	}
+}
+
+func TestBuildHandoverStats_MultipleShards(t *testing.T) {
+	now := time.Now().UTC()
+	executorID := "exec-1"
+	shardIDs := []string{"shard-1", "shard-2"}
+
+	for name, tc := range map[string]struct {
+		executors map[string]store.HeartbeatState
+
+		previousOwners map[string]string
+		expected       map[string]store.ShardHandoverStats
+	}{
+		"no previous owner for both shards": {
+			previousOwners: map[string]string{},
+			executors:      map[string]store.HeartbeatState{},
+			expected:       map[string]store.ShardHandoverStats{},
+		},
+		"emergency handover for shard-1, no handover for shard-2": {
+			previousOwners: map[string]string{
+				"shard-1": "old-active",
+			},
+			executors: map[string]store.HeartbeatState{
+				"old-active": {
+					Status:        types.ExecutorStatusACTIVE,
+					LastHeartbeat: now.Add(-10 * time.Second),
+				},
+			},
+			expected: map[string]store.ShardHandoverStats{
+				"shard-1": {
+					HandoverType:                      types.HandoverTypeEMERGENCY,
+					PreviousExecutorLastHeartbeatTime: now.Add(-10 * time.Second),
+				},
+			},
+		},
+		"graceful handover for shard-1": {
+			previousOwners: map[string]string{
+				"shard-1": "old-draining",
+			},
+			executors: map[string]store.HeartbeatState{
+				"old-draining": {
+					Status:        types.ExecutorStatusDRAINING,
+					LastHeartbeat: now.Add(-20 * time.Second),
+				},
+			},
+			expected: map[string]store.ShardHandoverStats{
+				"shard-1": {
+					HandoverType:                      types.HandoverTypeGRACEFUL,
+					PreviousExecutorLastHeartbeatTime: now.Add(-20 * time.Second),
+				},
+			},
+		},
+		"same executor as previous, no handover": {
+			previousOwners: map[string]string{
+				"shard-1": executorID,
+			},
+			executors: map[string]store.HeartbeatState{
+				executorID: {
+					Status:        types.ExecutorStatusACTIVE,
+					LastHeartbeat: now,
+				},
+			},
+			expected: map[string]store.ShardHandoverStats{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
+			defer mocks.ctrl.Finish()
+			processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+			namespaceState := &store.NamespaceState{
+				Executors: tc.executors,
 			}
-			assert.Equal(t, want, newAssignments["new"].ShardHandoverStats)
-			assert.Empty(t, newAssignments["old"].ShardHandoverStats)
-			assert.NotContains(t, state.ShardAssignments["new"].AssignedShards, "fresh", "snapshot must remain unchanged")
-			if test.previousOwner != "" {
-				assert.Contains(t, state.ShardAssignments[test.previousOwner].AssignedShards, "shard", "previous ownership must remain in the snapshot")
-			}
+			stats := processor.buildHandoverStats(namespaceState, tc.previousOwners, executorID, shardIDs)
+			assert.Equal(t, tc.expected, stats)
 		})
 	}
 }
