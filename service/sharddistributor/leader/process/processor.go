@@ -773,8 +773,9 @@ func (p *namespaceProcessor) buildHandoverStats(
 		if namespaceState.IsShardDrained(shardID) {
 			continue
 		}
-		// If the previous executor heartbeat is not in the snapshot, the executor
-		// has already been cleaned up, so skip updating handover stats.
+		// previous executor heartbeat is not found in namespace state
+		// meaning the executor has already been cleaned up
+		// skip updating handover stats
 		previousExecutorHeartbeat, exists := namespaceState.Executors[previousOwner]
 		if !exists {
 			p.logger.WithTags(
