@@ -485,9 +485,9 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return nil
 	}
 
-	oldAssignments := namespaceState.ShardAssignments
+	previousOwnersByShard := namespaceState.ShardOwners()
 	assignmentTime := p.timeSource.Now().UTC()
-	newAssignments, executorsWithChangedAssignments := p.getNewAssignmentsState(namespaceState, currentAssignments, assignmentTime)
+	newAssignments, executorsWithChangedAssignments := p.getNewAssignmentsState(namespaceState, currentAssignments, previousOwnersByShard, assignmentTime)
 
 	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 
@@ -507,7 +507,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	shardStatisticsUpdatesForAssignmentChange, prepareStatisticsErr := loadbalancer.PrepareAssignmentStatistics(
 		p.sdConfig,
 		p.namespaceCfg.Name,
-		oldAssignments,
+		previousOwnersByShard,
 		newAssignments,
 		namespaceState.ShardStats,
 		assignmentTime,
@@ -695,14 +695,14 @@ func applyMoves(currentAssignments map[string][]string, moves []plan.Move) error
 }
 
 // getNewAssignmentsState builds a new assignment map without modifying namespaceState.
-func (*namespaceProcessor) getNewAssignmentsState(
+func (p *namespaceProcessor) getNewAssignmentsState(
 	namespaceState *store.NamespaceState,
 	currentAssignments map[string][]string,
+	previousOwnersByShard map[string]string,
 	now time.Time,
 ) (map[string]store.AssignedState, map[string]struct{}) {
 	newAssignments := make(map[string]store.AssignedState, len(currentAssignments))
 	executorsWithChangedAssignments := make(map[string]struct{})
-	previousOwners := namespaceState.ShardOwners()
 
 	for executorID, shards := range currentAssignments {
 		assignedShardsMap := make(map[string]*types.ShardAssignment)
@@ -729,7 +729,7 @@ func (*namespaceProcessor) getNewAssignmentsState(
 			AssignedShards:     assignedShardsMap,
 			LastUpdated:        lastUpdated,
 			ModRevision:        modRevision,
-			ShardHandoverStats: buildHandoverStats(namespaceState, previousOwners, executorID, shards),
+			ShardHandoverStats: p.buildHandoverStats(namespaceState, previousOwnersByShard, executorID, shards),
 		}
 	}
 
@@ -749,33 +749,51 @@ func shardSetsEqual(a map[string]*types.ShardAssignment, b map[string]*types.Sha
 	return true
 }
 
-func buildHandoverStats(
+func (p *namespaceProcessor) buildHandoverStats(
 	namespaceState *store.NamespaceState,
-	previousOwners map[string]string,
+	previousOwnersByShard map[string]string,
 	executorID string,
 	shardIDs []string,
 ) map[string]store.ShardHandoverStats {
 	stats := make(map[string]store.ShardHandoverStats)
 	for _, shardID := range shardIDs {
-		previousOwner, assigned := previousOwners[shardID]
-		if !assigned || previousOwner == executorID {
+		previousOwner, hasPreviousOwner := previousOwnersByShard[shardID]
+		// If there is no previous owner, this is the first assignment of the shard,
+		// so skip updating handover stats.
+		if !hasPreviousOwner {
 			continue
 		}
+
+		// If the owner is unchanged, no handover occurred.
+		if previousOwner == executorID {
+			continue
+		}
+
+		// Drained shards do not produce handover statistics.
 		if namespaceState.IsShardDrained(shardID) {
 			continue
 		}
-		previousHeartbeat, exists := namespaceState.Executors[previousOwner]
+		// If the previous executor heartbeat is not in the snapshot, the executor
+		// has already been cleaned up, so skip updating handover stats.
+		previousExecutorHeartbeat, exists := namespaceState.Executors[previousOwner]
 		if !exists {
+			p.logger.WithTags(
+				tag.ShardNamespace(p.namespaceCfg.Name),
+				tag.ShardKey(shardID),
+				tag.ShardExecutor(executorID),
+			).Info("previous executor heartbeat not found, skipping handover stats")
 			continue
 		}
 
 		handoverType := types.HandoverTypeEMERGENCY
-		if previousHeartbeat.Status == types.ExecutorStatusDRAINING || previousHeartbeat.Status == types.ExecutorStatusDRAINED {
+		// Consider it a graceful handover if the previous executor was in DRAINING
+		// or DRAINED status. Otherwise, it is an emergency handover.
+		if previousExecutorHeartbeat.Status == types.ExecutorStatusDRAINING || previousExecutorHeartbeat.Status == types.ExecutorStatusDRAINED {
 			handoverType = types.HandoverTypeGRACEFUL
 		}
 		stats[shardID] = store.ShardHandoverStats{
 			HandoverType:                      handoverType,
-			PreviousExecutorLastHeartbeatTime: previousHeartbeat.LastHeartbeat,
+			PreviousExecutorLastHeartbeatTime: previousExecutorHeartbeat.LastHeartbeat,
 		}
 	}
 	return stats

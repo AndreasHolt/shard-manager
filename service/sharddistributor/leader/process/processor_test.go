@@ -542,7 +542,7 @@ func TestRebalanceShards_DrainedShardsAreDroppedFromExecutors(t *testing.T) {
 				DrainedShards:    map[string]struct{}{"1": {}},
 			}, nil)
 
-			// Shard "1" is drained, so we only look up a shard that is active, which is "0"
+			// Shard "1" is drained, so only active shard "0" remains assigned.
 			mocks.election.EXPECT().Guard().Return(store.NopGuard())
 
 			var request store.AssignShardsRequest
@@ -1012,9 +1012,8 @@ func TestGetNewAssignmentsState_HandoverStats(t *testing.T) {
 				state.DrainedShards["shard"] = struct{}{}
 			}
 			currentAssignments := map[string][]string{"new": {"shard", "fresh", "unchanged"}, "old": {}}
-			// Assignment rebuilding must not consult the ownership cache, even for new shards.
 			mocks.store.EXPECT().GetShardOwner(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-			newAssignments, _ := processor.getNewAssignmentsState(state, currentAssignments, now)
+			newAssignments, _ := processor.getNewAssignmentsState(state, currentAssignments, state.ShardOwners(), now)
 			want := make(map[string]store.ShardHandoverStats)
 			if test.wantHandover {
 				want["shard"] = store.ShardHandoverStats{HandoverType: test.wantType, PreviousExecutorLastHeartbeatTime: previousHeartbeat}
@@ -1062,7 +1061,12 @@ func TestGetNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
 		"exec-3": {"shard-5"},            // new
 	}
 
-	newAssignments, executorsWithChangedAssignments := processor.getNewAssignmentsState(namespaceState, currentAssignments, now)
+	newAssignments, executorsWithChangedAssignments := processor.getNewAssignmentsState(
+		namespaceState,
+		currentAssignments,
+		namespaceState.ShardOwners(),
+		now,
+	)
 
 	assert.Len(t, newAssignments, 3)
 	assert.Equal(t, map[string]struct{}{"exec-2": {}, "exec-3": {}}, executorsWithChangedAssignments)
