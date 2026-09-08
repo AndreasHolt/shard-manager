@@ -246,14 +246,14 @@ func TestPlanRebalanceNaiveByReportedLoad(t *testing.T) {
 	}
 }
 
-func TestPlanRebalanceEmitsMovedLoadMilli(t *testing.T) {
+func TestPlanRebalanceEmitsMovedLoad(t *testing.T) {
 	expectedMoveCount := 1
 	movedShardReportedLoad := 30.0
-	expectedMovedLoadMilli := int64(movedShardReportedLoad * 1000)
+	expectedMovedLoad := int64(movedShardReportedLoad)
 
 	metricsScope := &metricsmocks.Scope{}
 	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(expectedMoveCount)).Once()
-	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedLoadMilli, expectedMovedLoadMilli).Once()
+	metricsScope.On("AddCounter", metrics.ShardDistributorAssignLoopMovedShardLoad, expectedMovedLoad).Once()
 
 	_, err := PlanRebalance(
 		testNaiveConfig(2),

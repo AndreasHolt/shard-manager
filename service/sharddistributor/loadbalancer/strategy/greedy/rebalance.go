@@ -81,9 +81,8 @@ func PlanRebalance(
 		moveBudget--
 	}
 	if len(moves) > 0 && metricsScope != nil {
-		movedLoadMilli := int64(movedReportedLoad * 1000)
 		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(len(moves)))
-		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopMovedLoadMilli, movedLoadMilli)
+		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopMovedShardLoad, int64(movedReportedLoad))
 	}
 	return moves, nil
 }

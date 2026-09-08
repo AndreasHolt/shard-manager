@@ -3094,8 +3094,8 @@ const (
 	ShardDistributorAssignLoopLoadBasedMoves
 	// ShardDistributorAssignLoopDeletedShards counts the number of shards removed (DONE status) in a rebalance cycle
 	ShardDistributorAssignLoopDeletedShards
-	// ShardDistributorAssignLoopMovedLoadMilli counts moved reported load in milli-load units to preserve fractional loads in an integer counter
-	ShardDistributorAssignLoopMovedLoadMilli
+	// ShardDistributorAssignLoopMovedShardLoad counts the reported load of shards moved due to load rebalancing
+	ShardDistributorAssignLoopMovedShardLoad
 	// ShardDistributorAssignLoopDroppedDrainedShards counts drained shards taken away from an executor in a rebalance cycle
 	ShardDistributorAssignLoopDroppedDrainedShards
 	// ShardDistributorDrainedShards tracks how many shards are currently drained in the namespace
@@ -3940,7 +3940,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 
 		ShardDistributorAssignLoopLoadBasedMoves: {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
 		ShardDistributorAssignLoopDeletedShards:  {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
-		ShardDistributorAssignLoopMovedLoadMilli: {metricName: "shard_distributor_shard_assign_moved_load_milli", metricType: Counter},
+		ShardDistributorAssignLoopMovedShardLoad: {metricName: "shard_distributor_shard_assign_moved_load", metricType: Counter},
 
 		ShardDistributorAssignLoopDroppedDrainedShards: {metricName: "shard_distributor_shard_assign_dropped_drained_shards", metricType: Counter},
 		ShardDistributorDrainedShards:                  {metricName: "shard_distributor_drained_shards", metricType: Gauge},
