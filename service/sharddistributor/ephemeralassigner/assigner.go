@@ -35,6 +35,7 @@ import (
 
 	"github.com/cadence-workflow/shard-manager/common/backoff"
 	"github.com/cadence-workflow/shard-manager/common/clock"
+	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/loadbalancer"
@@ -67,16 +68,18 @@ type Assigner struct {
 	timeSource clock.TimeSource
 	cfg        *config.Config
 	storage    store.Store
+	metrics    metrics.Scope
 
 	batcher *shardBatcher
 }
 
 // New builds an Assigner. Call Start before serving requests and Stop on shutdown.
-func New(timeSource clock.TimeSource, cfg *config.Config, storage store.Store) *Assigner {
+func New(timeSource clock.TimeSource, cfg *config.Config, storage store.Store, metricsClient metrics.Client) *Assigner {
 	a := &Assigner{
 		timeSource: timeSource,
 		cfg:        cfg,
 		storage:    storage,
+		metrics:    metricsClient.Scope(metrics.ShardDistributorEphemeralAssignmentScope),
 	}
 	a.batcher = newShardBatcher(ephemeralBatchTimeout, a.assignEphemeralBatch)
 	return a
@@ -92,54 +95,9 @@ func (a *Assigner) Stop() {
 	a.batcher.Stop()
 }
 
-// GetOrAssign assigns an ephemeral shard that does not yet exist in storage. It
-// submits the request to the batcher and, on a version conflict (concurrent
-// assignment by another goroutine), retries with exponential backoff. Each retry
-// re-reads storage first: if the concurrent writer already committed the
-// assignment we return it immediately without re-submitting to the batcher.
+// GetOrAssign assigns an ephemeral shard that does not yet exist in storage.
 func (a *Assigner) GetOrAssign(ctx context.Context, request *types.GetShardOwnerRequest) (*types.GetShardOwnerResponse, error) {
-	retryPolicy := backoff.NewExponentialRetryPolicy(versionConflictRetryInitialInterval)
-	retryPolicy.SetMaximumInterval(versionConflictRetryMaxInterval)
-	retryPolicy.SetMaximumAttempts(versionConflictRetryMaxAttempts)
-
-	throttleRetry := backoff.NewThrottleRetry(
-		backoff.WithRetryPolicy(retryPolicy),
-		backoff.WithRetryableError(func(err error) bool {
-			return errors.Is(err, store.ErrVersionConflict)
-		}),
-	)
-
-	var resp *types.GetShardOwnerResponse
-	isRetry := false
-	err := throttleRetry.Do(ctx, func(ctx context.Context) error {
-		if isRetry {
-			// A concurrent batch won the race. Re-read storage first: if the
-			// winner already committed our shard's assignment we can return
-			// immediately without re-submitting to the batcher.
-			owner, err := a.storage.GetShardOwner(ctx, request.Namespace, request.ShardKey)
-			if errors.Is(err, store.ErrShardDrained) {
-				return err
-			}
-			if err != nil && !errors.Is(err, store.ErrShardNotFound) {
-				return &types.InternalServiceError{Message: fmt.Sprintf("failed to get shard owner: %v", err)}
-			}
-			if err == nil {
-				resp = &types.GetShardOwnerResponse{
-					Owner:     owner.ExecutorID,
-					Metadata:  owner.Metadata,
-					Namespace: request.Namespace,
-				}
-				return nil
-			}
-		}
-		isRetry = true
-
-		// Submit to the batcher to assign the shard.
-		var err error
-		resp, err = a.batcher.Submit(ctx, request)
-		return err
-	})
-
+	resp, err := a.batcher.Submit(ctx, request)
 	if err != nil {
 		return nil, mapAssignError(request, err)
 	}
@@ -163,13 +121,48 @@ func mapAssignError(request *types.GetShardOwnerRequest, err error) error {
 
 // assignEphemeralBatch is the ephemeralAssignmentBatchFn wired into the shardBatcher.
 // It processes a whole batch of unassigned shard keys for a single ephemeral
-// namespace using two storage operations:
-//  1. GetState — read current namespace state once for the whole batch.
-//  2. AssignShards — write all new assignments atomically in one operation.
+// namespace using two storage operations per attempt:
+//  1. GetState reads current namespace state once for the whole batch.
+//  2. AssignShards writes all new assignments atomically in one operation.
 //
 // Shards that already have an owner are skipped from placement,
 // the rest are placed by the load balancer and saved in a single AssignShards call
 func (a *Assigner) assignEphemeralBatch(ctx context.Context, namespace string, shardKeys []string) (map[string]*types.GetShardOwnerResponse, map[string]struct{}, error) {
+	started := a.timeSource.Now()
+	batchMetrics := a.metrics.Tagged(metrics.NamespaceTag(namespace))
+	batchMetrics.RecordHistogramValue(metrics.ShardDistributorEphemeralAssignmentBatchSize, float64(len(shardKeys)))
+	defer func() {
+		batchMetrics.RecordTimer(metrics.ShardDistributorEphemeralAssignmentBatchLatency, a.timeSource.Since(started))
+	}()
+
+	// ExponentialRetryPolicy jitters each delay so competing replicas do not
+	// retry the same namespace in lockstep.
+	retryPolicy := backoff.NewExponentialRetryPolicy(versionConflictRetryInitialInterval)
+	retryPolicy.SetMaximumInterval(versionConflictRetryMaxInterval)
+	retryPolicy.SetMaximumAttempts(versionConflictRetryMaxAttempts)
+	retrier := backoff.NewRetrier(retryPolicy, a.timeSource)
+
+	for {
+		results, drained, err := a.tryAssignEphemeralBatch(ctx, namespace, shardKeys)
+		if !errors.Is(err, store.ErrVersionConflict) {
+			return results, drained, err
+		}
+
+		batchMetrics.IncCounter(metrics.ShardDistributorEphemeralAssignmentBatchVersionConflicts)
+		delay := retrier.NextBackOff()
+		if delay < 0 {
+			batchMetrics.IncCounter(metrics.ShardDistributorEphemeralAssignmentBatchRetriesExhausted)
+			return nil, nil, err
+		}
+
+		batchMetrics.IncCounter(metrics.ShardDistributorEphemeralAssignmentBatchRetries)
+		if err := a.timeSource.SleepWithContext(ctx, delay); err != nil {
+			return nil, nil, err
+		}
+	}
+}
+
+func (a *Assigner) tryAssignEphemeralBatch(ctx context.Context, namespace string, shardKeys []string) (map[string]*types.GetShardOwnerResponse, map[string]struct{}, error) {
 	state, err := a.storage.GetState(ctx, namespace)
 	if err != nil {
 		return nil, nil, &types.InternalServiceError{Message: fmt.Sprintf("get namespace state: %v", err)}
@@ -187,8 +180,7 @@ func (a *Assigner) assignEphemeralBatch(ctx context.Context, namespace string, s
 
 		if err := a.storage.AssignShards(ctx, namespace, store.AssignShardsRequest{NewState: state}, store.NopGuard()); err != nil {
 			if errors.Is(err, store.ErrVersionConflict) {
-				// Return the version-conflict sentinel unwrapped so callers can
-				// detect it with errors.Is and decide whether to retry.
+				// Preserve the sentinel so the batch retry loop can detect it.
 				return nil, nil, fmt.Errorf("assign ephemeral shards: %w", err)
 			}
 			return nil, nil, &types.InternalServiceError{Message: fmt.Sprintf("assign ephemeral shards: %v", err)}

@@ -1541,6 +1541,9 @@ const (
 	// ShardDistributorForceResetNamespaceScope tracks ForceResetNamespace API calls received by service
 	ShardDistributorForceResetNamespaceScope
 
+	// ShardDistributorEphemeralAssignmentScope tracks on-demand ephemeral assignment batches.
+	ShardDistributorEphemeralAssignmentScope
+
 	NumShardDistributorScopes
 )
 
@@ -2252,6 +2255,7 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		ShardDistributorLeaderScope:                                {operation: "Leader"},
 		ShardDistributorInspectShardScope:                          {operation: "InspectShard"},
 		ShardDistributorForceResetNamespaceScope:                   {operation: "ForceResetNamespace"},
+		ShardDistributorEphemeralAssignmentScope:                   {operation: "EphemeralAssignment"},
 	},
 }
 
@@ -3078,6 +3082,12 @@ const (
 	ShardDistributorStoreRequestsPerNamespace
 	ShardDistributorStoreLatencyHistogramPerNamespace
 	ShardDistributorStoreGetStateETCDRoundTripLatency
+
+	ShardDistributorEphemeralAssignmentBatchSize
+	ShardDistributorEphemeralAssignmentBatchVersionConflicts
+	ShardDistributorEphemeralAssignmentBatchRetries
+	ShardDistributorEphemeralAssignmentBatchRetriesExhausted
+	ShardDistributorEphemeralAssignmentBatchLatency
 
 	// ShardDistributorShardAssignmentDistributionLatency measures the time taken between assignment of a shard
 	// and the time it is fully distributed to executors
@@ -3933,6 +3943,12 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorStoreRequestsPerNamespace:         {metricName: "shard_distributor_store_requests_per_namespace", metricType: Counter},
 		ShardDistributorStoreLatencyHistogramPerNamespace: {metricName: "shard_distributor_store_latency_histogram_per_namespace", metricType: Histogram, buckets: ShardDistributorExecutorStoreLatencyBuckets},
 		ShardDistributorStoreGetStateETCDRoundTripLatency: {metricName: "shard_distributor_store_get_state_etcd_round_trip_latency", metricType: Histogram, buckets: ShardDistributorExecutorStoreLatencyBuckets},
+
+		ShardDistributorEphemeralAssignmentBatchSize:             {metricName: "shard_distributor_ephemeral_assignment_batch_size", metricType: Histogram, buckets: tally.ValueBuckets{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}},
+		ShardDistributorEphemeralAssignmentBatchVersionConflicts: {metricName: "shard_distributor_ephemeral_assignment_batch_version_conflicts", metricType: Counter},
+		ShardDistributorEphemeralAssignmentBatchRetries:          {metricName: "shard_distributor_ephemeral_assignment_batch_retries", metricType: Counter},
+		ShardDistributorEphemeralAssignmentBatchRetriesExhausted: {metricName: "shard_distributor_ephemeral_assignment_batch_retries_exhausted", metricType: Counter},
+		ShardDistributorEphemeralAssignmentBatchLatency:          {metricName: "shard_distributor_ephemeral_assignment_batch_latency", metricType: Timer},
 
 		ShardDistributorShardAssignmentDistributionLatency: {metricName: "shard_distributor_shard_assignment_distribution_latency", metricType: Histogram, buckets: ShardDistributorShardAssignmentLatencyBuckets},
 		ShardDistributorShardHandoverLatency:               {metricName: "shard_distributor_shard_handover_latency", metricType: Histogram, buckets: ShardDistributorShardAssignmentLatencyBuckets},
