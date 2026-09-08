@@ -81,7 +81,14 @@ func TestAssignEphemeralBatch(t *testing.T) {
 						}},
 					},
 				}, nil)
-				mockStore.EXPECT().AssignShards(gomock.Any(), _testNamespaceEphemeral, gomock.Any(), gomock.Any()).Return(nil)
+				mockStore.EXPECT().AssignShards(gomock.Any(), _testNamespaceEphemeral, gomock.Any(), gomock.Any()).Do(
+					func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) {
+						require.Equal(t, map[string]struct{}{"owner2": {}}, request.ChangedExecutors)
+						require.Len(t, request.NewState.ShardAssignments, 2)
+						require.Len(t, request.NewState.ShardAssignments["owner1"].AssignedShards, 2)
+						require.Contains(t, request.NewState.ShardAssignments["owner2"].AssignedShards, "NON-EXISTING-SHARD")
+					},
+				).Return(nil)
 				mockStore.EXPECT().GetExecutor(gomock.Any(), _testNamespaceEphemeral, "owner2").Return(&store.ShardOwner{
 					ExecutorID: "owner2",
 					Metadata:   map[string]string{"ip": "127.0.0.1", "port": "1234"},
@@ -373,6 +380,7 @@ func TestAssignEphemeralBatch_RetriesWholeBatch(t *testing.T) {
 		}
 	}
 	assertWholeBatch := func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) {
+		require.Equal(t, map[string]struct{}{"owner1": {}}, request.ChangedExecutors)
 		require.Len(t, request.NewState.ShardAssignments["owner1"].AssignedShards, len(shardKeys))
 		for _, shardKey := range shardKeys {
 			require.Contains(t, request.NewState.ShardAssignments["owner1"].AssignedShards, shardKey)

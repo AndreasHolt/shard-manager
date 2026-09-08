@@ -176,9 +176,12 @@ func (a *Assigner) tryAssignEphemeralBatch(ctx context.Context, namespace string
 			return nil, nil, &types.InternalServiceError{Message: fmt.Sprintf("plan initial placement: %v", err)}
 		}
 
-		mergePlacements(state, placements, a.timeSource.Now().UTC())
+		changedExecutors := mergePlacements(state, placements, a.timeSource.Now().UTC())
 
-		if err := a.storage.AssignShards(ctx, namespace, store.AssignShardsRequest{NewState: state}, store.NopGuard()); err != nil {
+		if err := a.storage.AssignShards(ctx, namespace, store.AssignShardsRequest{
+			NewState:         state,
+			ChangedExecutors: changedExecutors,
+		}, store.NopGuard()); err != nil {
 			if errors.Is(err, store.ErrVersionConflict) {
 				// Preserve the sentinel so the batch retry loop can detect it.
 				return nil, nil, fmt.Errorf("assign ephemeral shards: %w", err)
@@ -217,10 +220,12 @@ func resolveOwners(state *store.NamespaceState, shardKeys []string) (executorByS
 	return executorByShard, toPlace, state.DrainedShards
 }
 
-// mergePlacements folds the planned shard→executor placements back into state.
+// mergePlacements folds the planned shard→executor placements back into state
+// and returns the set of modified executors.
 // The AssignedShards maps are copied to avoid mutating the object returned by
 // GetState.
-func mergePlacements(state *store.NamespaceState, placements []plan.Placement, now time.Time) {
+func mergePlacements(state *store.NamespaceState, placements []plan.Placement, now time.Time) map[string]struct{} {
+	changedExecutors := make(map[string]struct{})
 	if state.ShardAssignments == nil {
 		state.ShardAssignments = make(map[string]store.AssignedState)
 	}
@@ -236,7 +241,9 @@ func mergePlacements(state *store.NamespaceState, placements []plan.Placement, n
 		existing.AssignedShards = newShards
 		existing.LastUpdated = now
 		state.ShardAssignments[executorID] = existing
+		changedExecutors[executorID] = struct{}{}
 	}
+	return changedExecutors
 }
 
 // fetchExecutorMetadata calls GetExecutor once per unique executor referenced by
