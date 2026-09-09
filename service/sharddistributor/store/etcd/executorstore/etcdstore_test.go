@@ -1501,6 +1501,124 @@ func TestLoadDrainedShardSetSkipsMalformedKeys(t *testing.T) {
 	assert.Equal(t, map[string]struct{}{"shard-A": {}}, state.DrainedShards)
 }
 
+func TestDeletedIDs(t *testing.T) {
+	deleteOp := func(deleted int64) *etcdserverpb.ResponseOp {
+		return &etcdserverpb.ResponseOp{
+			Response: &etcdserverpb.ResponseOp_ResponseDeleteRange{
+				ResponseDeleteRange: &etcdserverpb.DeleteRangeResponse{Deleted: deleted},
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		responses []*clientv3.TxnResponse
+		ids       []string
+		want      []string
+		wantErr   string
+	}{
+		{
+			name: "keeps ids whose delete removed a key",
+			responses: []*clientv3.TxnResponse{
+				{Responses: []*etcdserverpb.ResponseOp{deleteOp(1), deleteOp(0)}},
+				{Responses: []*etcdserverpb.ResponseOp{deleteOp(2)}},
+			},
+			ids:  []string{"a", "b", "c"},
+			want: []string{"a", "c"},
+		},
+		{
+			name: "errors when there are more responses than ids",
+			responses: []*clientv3.TxnResponse{
+				{Responses: []*etcdserverpb.ResponseOp{deleteOp(1), deleteOp(1)}},
+			},
+			ids:     []string{"a"},
+			wantErr: "got more op responses than the 1 ops submitted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deletedIDs(tt.responses, tt.ids)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDrainHostsLifecycle(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	firstDrain := time.Date(2026, 8, 25, 7, 40, 0, 0, time.UTC)
+	require.NoError(t, executorStore.DrainHosts(ctx, tc.Namespace, []store.DrainedHost{
+		{Hostname: "host/name", DrainedAt: firstDrain, DrainedBy: "gaziza", Reason: "test"},
+		{Hostname: "host-b", DrainedAt: firstDrain, DrainedBy: "gaziza", Reason: "test"},
+	}))
+
+	hosts, err := executorStore.GetDrainedHosts(ctx, tc.Namespace)
+	require.NoError(t, err)
+	require.Equal(t, []string{"host-b", "host_name"}, hostnames(hosts))
+
+	// Re-drain keeps the original metadata; a slash and underscore are the same host.
+	require.NoError(t, executorStore.DrainHosts(ctx, tc.Namespace, []store.DrainedHost{
+		{Hostname: "host_name", DrainedAt: firstDrain.Add(time.Hour), DrainedBy: "other", Reason: "changed"},
+	}))
+
+	state, err := executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.Equal(t, firstDrain, state.DrainedHosts["host_name"].DrainedAt.UTC())
+	assert.Equal(t, "test", state.DrainedHosts["host_name"].Reason)
+
+	removed, err := executorStore.UndrainHosts(ctx, tc.Namespace, []string{"host/name", "never-drained"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"host_name"}, removed)
+
+	hosts, err = executorStore.GetDrainedHosts(ctx, tc.Namespace)
+	require.NoError(t, err)
+	require.Equal(t, []string{"host-b"}, hostnames(hosts))
+
+	require.Error(t, executorStore.DrainHosts(ctx, tc.Namespace, []store.DrainedHost{
+		{Hostname: "host@uuid"},
+	}))
+}
+
+func TestGetStateSkipsMalformedDrainedHosts(t *testing.T) {
+	tc := testhelper.SetupStoreTestCluster(t)
+	executorStore := createStore(t, tc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, executorStore.DrainHosts(ctx, tc.Namespace, []store.DrainedHost{
+		{Hostname: "host-a", DrainedAt: time.Now().UTC()},
+	}))
+
+	malformed := etcdkeys.BuildDrainedHostKey(tc.EtcdPrefix, tc.Namespace, "host-b") + "/nested"
+	_, err := tc.Client.Put(ctx, malformed, "{}")
+	require.NoError(t, err)
+	_, err = tc.Client.Put(ctx, etcdkeys.BuildDrainedHostKey(tc.EtcdPrefix, tc.Namespace, "host-c"), "not-json")
+	require.NoError(t, err)
+
+	state, err := executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+	assert.True(t, state.IsHostDrained("host-a"))
+	assert.False(t, state.IsHostDrained("host-b"))
+	assert.True(t, state.IsHostDrained("host-c"))
+}
+
+func hostnames(hosts []store.DrainedHost) []string {
+	out := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		out = append(out, host.Hostname)
+	}
+	return out
+}
+
 func createStore(t *testing.T, tc *testhelper.StoreTestCluster) store.Store {
 	t.Helper()
 

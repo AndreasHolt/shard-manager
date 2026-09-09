@@ -185,3 +185,20 @@ func TestValidateShardIDMatchesKeyParsing(t *testing.T) {
 		})
 	}
 }
+
+func TestDrainedHostsPrefixIsDisjointFromSiblingPrefixes(t *testing.T) {
+	hosts := BuildDrainedHostsPrefix("/cadence", "test-ns")
+	executors := BuildExecutorsPrefix("/cadence", "test-ns")
+	shards := BuildDrainedShardsPrefix("/cadence", "test-ns")
+
+	for _, other := range []string{executors, shards} {
+		assert.NotEqual(t, hosts, other)
+		assert.False(t, strings.HasPrefix(hosts, other))
+		assert.False(t, strings.HasPrefix(other, hosts))
+	}
+}
+
+func TestValidateHostnameRejectsOverLength(t *testing.T) {
+	assert.NoError(t, ValidateHostname(strings.Repeat("a", 128)))
+	assert.ErrorContains(t, ValidateHostname(strings.Repeat("a", 129)), "exceeds 128 bytes")
+}
