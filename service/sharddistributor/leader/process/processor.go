@@ -521,7 +521,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		}
 	}
 
-	p.emitActiveShardMetric(namespaceState.ShardAssignments, metricsLoopScope)
 	p.emitMaxOwnersPerShardMetric(namespaceState.ShardAssignments, metricsLoopScope)
 	return nil
 }
