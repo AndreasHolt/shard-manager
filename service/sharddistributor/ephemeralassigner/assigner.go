@@ -143,7 +143,7 @@ func (a *Assigner) assignEphemeralBatch(ctx context.Context, namespace string, s
 	retrier := backoff.NewRetrier(retryPolicy, a.timeSource)
 
 	for {
-		results, drained, err := a.tryAssignEphemeralBatch(ctx, namespace, shardKeys)
+		results, drained, err := a.tryAssignEphemeralBatch(ctx, namespace, shardKeys, batchMetrics)
 		if !errors.Is(err, store.ErrVersionConflict) {
 			return results, drained, err
 		}
@@ -152,6 +152,7 @@ func (a *Assigner) assignEphemeralBatch(ctx context.Context, namespace string, s
 		delay := retrier.NextBackOff()
 		if delay < 0 {
 			batchMetrics.IncCounter(metrics.ShardDistributorEphemeralAssignmentBatchRetriesExhausted)
+			batchMetrics.AddCounter(metrics.ShardDistributorEphemeralAssignmentBatchRequestsExhausted, int64(len(shardKeys)))
 			return nil, nil, err
 		}
 
@@ -162,7 +163,12 @@ func (a *Assigner) assignEphemeralBatch(ctx context.Context, namespace string, s
 	}
 }
 
-func (a *Assigner) tryAssignEphemeralBatch(ctx context.Context, namespace string, shardKeys []string) (map[string]*types.GetShardOwnerResponse, map[string]struct{}, error) {
+func (a *Assigner) tryAssignEphemeralBatch(
+	ctx context.Context,
+	namespace string,
+	shardKeys []string,
+	batchMetrics metrics.Scope,
+) (map[string]*types.GetShardOwnerResponse, map[string]struct{}, error) {
 	state, err := a.storage.GetState(ctx, namespace)
 	if err != nil {
 		return nil, nil, &types.InternalServiceError{Message: fmt.Sprintf("get namespace state: %v", err)}
@@ -178,15 +184,28 @@ func (a *Assigner) tryAssignEphemeralBatch(ctx context.Context, namespace string
 
 		changedExecutors := mergePlacements(state, placements, a.timeSource.Now().UTC())
 
-		if err := a.storage.AssignShards(ctx, namespace, store.AssignShardsRequest{
+		writeErr := a.storage.AssignShards(ctx, namespace, store.AssignShardsRequest{
 			NewState:         state,
 			ChangedExecutors: changedExecutors,
-		}, store.NopGuard()); err != nil {
-			if errors.Is(err, store.ErrVersionConflict) {
-				// Preserve the sentinel so the batch retry loop can detect it.
-				return nil, nil, fmt.Errorf("assign ephemeral shards: %w", err)
+		}, store.NopGuard())
+		writeResult := metrics.ShardDistributorAssignmentWriteResultSuccess
+		if writeErr != nil {
+			writeResult = metrics.ShardDistributorAssignmentWriteResultError
+			if errors.Is(writeErr, store.ErrVersionConflict) {
+				writeResult = metrics.ShardDistributorAssignmentWriteResultVersionConflict
 			}
-			return nil, nil, &types.InternalServiceError{Message: fmt.Sprintf("assign ephemeral shards: %v", err)}
+		}
+		batchMetrics.Tagged(
+			metrics.ShardDistributorAssignmentWriterTag(metrics.ShardDistributorAssignmentWriterEphemeral),
+			metrics.ShardDistributorAssignmentWriteResultTag(writeResult),
+		).IncCounter(metrics.ShardDistributorAssignmentWriteAttempts)
+
+		if writeErr != nil {
+			if errors.Is(writeErr, store.ErrVersionConflict) {
+				// Preserve the sentinel so the batch retry loop can detect it.
+				return nil, nil, fmt.Errorf("assign ephemeral shards: %w", writeErr)
+			}
+			return nil, nil, &types.InternalServiceError{Message: fmt.Sprintf("assign ephemeral shards: %v", writeErr)}
 		}
 
 		for _, placement := range placements {

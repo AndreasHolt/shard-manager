@@ -407,8 +407,12 @@ func TestAssignEphemeralBatch_RetriesWholeBatch(t *testing.T) {
 
 	snapshot := testScope.Snapshot()
 	metricSuffix := "+namespace=test-ephemeral,operation=EphemeralAssignment"
+	writeConflictMetric := "test.shard_distributor_assignment_write_attempts+assignment_write_result=version_conflict,assignment_writer=ephemeral,namespace=test-ephemeral,operation=EphemeralAssignment"
+	writeSuccessMetric := "test.shard_distributor_assignment_write_attempts+assignment_write_result=success,assignment_writer=ephemeral,namespace=test-ephemeral,operation=EphemeralAssignment"
 	require.Equal(t, int64(1), snapshot.Counters()["test.shard_distributor_ephemeral_assignment_batch_version_conflicts"+metricSuffix].Value())
 	require.Equal(t, int64(1), snapshot.Counters()["test.shard_distributor_ephemeral_assignment_batch_retries"+metricSuffix].Value())
+	require.Equal(t, int64(1), snapshot.Counters()[writeConflictMetric].Value())
+	require.Equal(t, int64(1), snapshot.Counters()[writeSuccessMetric].Value())
 	require.Contains(t, snapshot.Histograms(), "test.shard_distributor_ephemeral_assignment_batch_size"+metricSuffix)
 	require.Contains(t, snapshot.Timers(), "test.shard_distributor_ephemeral_assignment_batch_latency"+metricSuffix)
 }
@@ -433,16 +437,20 @@ func TestAssignEphemeralBatch_ExhaustsConflictRetries(t *testing.T) {
 	}).Times(versionConflictRetryMaxAttempts + 1)
 	mockStorage.EXPECT().AssignShards(gomock.Any(), _testNamespaceEphemeral, gomock.Any(), gomock.Any()).Return(store.ErrVersionConflict).Times(versionConflictRetryMaxAttempts + 1)
 
-	results, drained, err := a.assignEphemeralBatch(context.Background(), _testNamespaceEphemeral, []string{"shard-1"})
+	shardKeys := []string{"shard-1", "shard-2", "shard-3"}
+	results, drained, err := a.assignEphemeralBatch(context.Background(), _testNamespaceEphemeral, shardKeys)
 	require.ErrorIs(t, err, store.ErrVersionConflict)
 	require.Nil(t, results)
 	require.Nil(t, drained)
 
 	snapshot := testScope.Snapshot()
 	metricSuffix := "+namespace=test-ephemeral,operation=EphemeralAssignment"
+	writeConflictMetric := "test.shard_distributor_assignment_write_attempts+assignment_write_result=version_conflict,assignment_writer=ephemeral,namespace=test-ephemeral,operation=EphemeralAssignment"
 	require.Equal(t, int64(versionConflictRetryMaxAttempts+1), snapshot.Counters()["test.shard_distributor_ephemeral_assignment_batch_version_conflicts"+metricSuffix].Value())
 	require.Equal(t, int64(versionConflictRetryMaxAttempts), snapshot.Counters()["test.shard_distributor_ephemeral_assignment_batch_retries"+metricSuffix].Value())
 	require.Equal(t, int64(1), snapshot.Counters()["test.shard_distributor_ephemeral_assignment_batch_retries_exhausted"+metricSuffix].Value())
+	require.Equal(t, int64(len(shardKeys)), snapshot.Counters()["test.shard_distributor_ephemeral_assignment_batch_requests_exhausted"+metricSuffix].Value())
+	require.Equal(t, int64(versionConflictRetryMaxAttempts+1), snapshot.Counters()[writeConflictMetric].Value())
 }
 
 // A drain that lands before the first batch flush must come back as ShardDrainedError,
