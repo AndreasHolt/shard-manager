@@ -411,6 +411,8 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	if err != nil {
 		return fmt.Errorf("get state: %w", err)
 	}
+	p.emitActiveShardMetric(namespaceState.ShardAssignments, metricsLoopScope)
+	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 
 	// Identify stale executors that need to be removed
 	staleExecutors := p.identifyStaleExecutors(namespaceState)
@@ -488,8 +490,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	previousOwnersByShard := namespaceState.ShardOwners()
 	assignmentTime := p.timeSource.Now().UTC()
 	newAssignments, executorsWithChangedAssignments := p.buildNewAssignmentsState(namespaceState, currentAssignments, previousOwnersByShard, assignmentTime)
-
-	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 
 	namespaceState.ShardAssignments = newAssignments
 	p.logger.Info("Applying new shard distribution.")

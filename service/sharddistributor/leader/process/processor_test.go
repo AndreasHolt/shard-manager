@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zapcore"
@@ -441,10 +442,12 @@ func TestRebalanceShards_NoShardsToReassign(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	testScope := tally.NewTestScope("test", nil)
+	processor.metricsClient = metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
 
 	now := mocks.timeSource.Now()
 	heartbeats := map[string]store.HeartbeatState{
-		"exec-1": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		"exec-1": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-500 * time.Millisecond)},
 	}
 	assignments := map[string]store.AssignedState{
 		"exec-1": {
@@ -461,6 +464,11 @@ func TestRebalanceShards_NoShardsToReassign(t *testing.T) {
 
 	err := processor.rebalanceShards(context.Background())
 	require.NoError(t, err)
+
+	gauges := testScope.Snapshot().Gauges()
+	metricTags := "namespace=test-ns,namespace_type=fixed,operation=ShardAssignLoop"
+	assert.Equal(t, float64(2), gauges["test.shard_distributor_active_shards+"+metricTags].Value())
+	assert.Equal(t, float64(500), gauges["test.shard_distributor_oldest_executor_heartbeat_lag+"+metricTags].Value())
 }
 
 func TestFindDrainedAssignedShards(t *testing.T) {
