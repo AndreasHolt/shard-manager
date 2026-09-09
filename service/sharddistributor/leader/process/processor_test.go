@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uber-go/tally"
 	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap/zapcore"
@@ -568,6 +569,8 @@ func TestRebalanceShards_AlreadyUnassignedDrainedShardsSkipAssign(t *testing.T) 
 	defer mocks.ctrl.Finish()
 
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	testScope := tally.NewTestScope("test", nil)
+	processor.metricsClient = metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
 
 	now := mocks.timeSource.Now()
 
@@ -583,6 +586,9 @@ func TestRebalanceShards_AlreadyUnassignedDrainedShardsSkipAssign(t *testing.T) 
 	// shards should not move, drained shards should not be assigned back
 	require.NoError(t, processor.rebalanceShards(context.Background()))
 	assert.NotEmpty(t, mocks.observedLogs.FilterMessage("No changes to distribution detected. Skipping rebalance.").All())
+
+	metricName := "test.shard_distributor_active_shards+namespace=test-ns,namespace_type=fixed,operation=ShardAssignLoop"
+	assert.Equal(t, float64(2), testScope.Snapshot().Gauges()[metricName].Value())
 
 }
 
