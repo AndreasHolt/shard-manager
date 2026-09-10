@@ -48,6 +48,8 @@ func TestNewExecutorsFixedNamespace(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, result.Executor)
+			require.NotNil(t, result.ExecutorInfo)
+			assert.Equal(t, result.Executor.GetExecutorID(), result.ExecutorInfo.GetExecutorID())
 		})
 	}
 }
@@ -73,6 +75,8 @@ func TestNewExecutorsEphemeralNamespace(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, result.Executor)
+			require.NotNil(t, result.ExecutorInfo)
+			assert.Equal(t, result.Executor.GetExecutorID(), result.ExecutorInfo.GetExecutorID())
 		})
 	}
 }
@@ -247,8 +251,10 @@ func TestNewExecutorsWithFixedNamespace(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Len(t, result.Executors, tt.expected)
-			for _, executor := range result.Executors {
+			assert.Len(t, result.ExecutorInfos, tt.expected)
+			for i, executor := range result.Executors {
 				assert.NotNil(t, executor)
+				assert.Equal(t, executor.GetExecutorID(), result.ExecutorInfos[i].GetExecutorID())
 			}
 		})
 	}
@@ -301,8 +307,10 @@ func TestNewExecutorsWithEphemeralNamespace(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Len(t, result.Executors, tt.expected)
-			for _, executor := range result.Executors {
+			assert.Len(t, result.ExecutorInfos, tt.expected)
+			for i, executor := range result.Executors {
 				assert.NotNil(t, executor)
+				assert.Equal(t, executor.GetExecutorID(), result.ExecutorInfos[i].GetExecutorID())
 			}
 		})
 	}

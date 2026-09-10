@@ -641,17 +641,14 @@ func (p *namespaceProcessor) findShardsToReassign(
 	}
 
 	for executorID, state := range namespaceState.ShardAssignments {
-		isActive := namespaceState.Executors[executorID].Status == types.ExecutorStatusACTIVE
-		_, isStale := staleExecutors[executorID]
+		isAssignable := namespaceState.IsExecutorAssignable(executorID, staleExecutors)
 
 		for shardID := range state.AssignedShards {
 			if _, ok := allAvailableShards[shardID]; ok {
 				delete(allAvailableShards, shardID)
-				// If executor is active AND not stale, keep the assignment
-				if isActive && !isStale {
+				if isAssignable {
 					currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 				} else {
-					// Otherwise, reassign the shard (executor is either inactive or stale)
 					shardsToReassign = append(shardsToReassign, shardID)
 				}
 			}
@@ -801,12 +798,9 @@ func (p *namespaceProcessor) buildHandoverStats(
 
 func (*namespaceProcessor) getActiveExecutors(namespaceState *store.NamespaceState, staleExecutors map[string]int64) []string {
 	var activeExecutors []string
-	for id, state := range namespaceState.Executors {
-		// Executor must be ACTIVE and not stale
-		if state.Status == types.ExecutorStatusACTIVE {
-			if _, ok := staleExecutors[id]; !ok {
-				activeExecutors = append(activeExecutors, id)
-			}
+	for id := range namespaceState.Executors {
+		if namespaceState.IsExecutorAssignable(id, staleExecutors) {
+			activeExecutors = append(activeExecutors, id)
 		}
 	}
 
