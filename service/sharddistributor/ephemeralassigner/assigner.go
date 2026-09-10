@@ -49,7 +49,8 @@ const (
 	// to widen the batching window, so a tight deadline would fail flushes exactly
 	// when batching helps most. It also has to cover a cold-cache GetExecutor, whose
 	// namespace refresh is itself bounded by refreshOperationTimeout (5s).
-	ephemeralBatchTimeout = 5 * time.Second
+	ephemeralBatchTimeout          = 5 * time.Second
+	ephemeralBatchCoalescingWindow = 10 * time.Millisecond
 
 	// versionConflictRetryInitialInterval is the starting backoff for retries
 	// triggered when a concurrent shard assignment causes a version conflict.
@@ -81,7 +82,7 @@ func New(timeSource clock.TimeSource, cfg *config.Config, storage store.Store, m
 		storage:    storage,
 		metrics:    metricsClient.Scope(metrics.ShardDistributorEphemeralAssignmentScope),
 	}
-	a.batcher = newShardBatcher(ephemeralBatchTimeout, a.assignEphemeralBatch)
+	a.batcher = newShardBatcher(ephemeralBatchTimeout, ephemeralBatchCoalescingWindow, a.assignEphemeralBatch)
 	return a
 }
 
