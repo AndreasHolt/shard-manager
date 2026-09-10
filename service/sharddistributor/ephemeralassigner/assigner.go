@@ -245,6 +245,7 @@ func resolveOwners(state *store.NamespaceState, shardKeys []string) (executorByS
 // The AssignedShards maps are copied to avoid mutating the object returned by
 // GetState.
 func mergePlacements(state *store.NamespaceState, placements []plan.Placement, now time.Time) map[string]struct{} {
+	// Track executors whose assignments change so persistence can avoid rewriting unchanged executor state.
 	changedExecutors := make(map[string]struct{})
 	if state.ShardAssignments == nil {
 		state.ShardAssignments = make(map[string]store.AssignedState)
