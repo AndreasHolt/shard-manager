@@ -447,6 +447,7 @@ func TestRebalanceShards_NoShardsToReassign(t *testing.T) {
 
 	now := mocks.timeSource.Now()
 	heartbeats := map[string]store.HeartbeatState{
+		// Set the last heartbeat to 500ms ago to verify the oldest executor heartbeat lag metric.
 		"exec-1": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-500 * time.Millisecond)},
 	}
 	assignments := map[string]store.AssignedState{
