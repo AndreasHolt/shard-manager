@@ -22,7 +22,7 @@ import (
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/client/executorclient/metricsconstants"
 )
 
-//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go . ShardProcessorFactory,ShardProcessor,Executor,Client
+//go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go . ShardProcessorFactory,ShardProcessor,Executor,Client,ExecutorInfo
 
 // ErrShardProcessNotFound is returned by GetShardProcess when this host is not
 // assigned the requested shard. Callers that interpret shard ownership should
@@ -71,7 +71,23 @@ type Executor[SP ShardProcessor] interface {
 	SetMetadata(metadata map[string]string)
 	// Get the current metadata of the executor
 	GetMetadata() map[string]string
+
+	// GetShardStatusReports returns the local shard reports this executor will heartbeat
+	GetShardStatusReports() map[string]*types.ShardStatusReport
 }
+
+// ExecutorInfo is the non-generic identity of a local executor
+type ExecutorInfo interface {
+	GetNamespace() string
+	GetExecutorID() string
+	GetMetadata() map[string]string
+	GetShardStatusReports() map[string]*types.ShardStatusReport
+}
+
+var (
+	_ ExecutorInfo = (*executorImpl[ShardProcessor])(nil)
+	_ ExecutorInfo = (*noopExecutor[ShardProcessor])(nil)
+)
 
 type Params[SP ShardProcessor] struct {
 	fx.In
@@ -214,6 +230,7 @@ func createShardDistributorExecutorClient(client Client, metricsScope tally.Scop
 func Module[SP ShardProcessor]() fx.Option {
 	return fx.Module("shard-distributor-executor-client",
 		fx.Provide(NewExecutor[SP]),
+		provideExecutorInfo[SP](),
 		fx.Invoke(func(executor Executor[SP], lc fx.Lifecycle) {
 			lc.Append(fx.StartStopHook(executor.Start, executor.Stop))
 		}),
@@ -226,8 +243,18 @@ func ModuleWithNamespace[SP ShardProcessor](namespace string) fx.Option {
 		fx.Provide(func(params Params[SP]) (Executor[SP], error) {
 			return NewExecutorWithNamespace(params, namespace)
 		}),
+		provideExecutorInfo[SP](),
 		fx.Invoke(func(executor Executor[SP], lc fx.Lifecycle) {
 			lc.Append(fx.StartStopHook(executor.Start, executor.Stop))
 		}),
 	)
+}
+
+// provideExecutorInfo re-registers the constructed Executor[SP] as ExecutorInfo
+// in a process-wide group.
+func provideExecutorInfo[SP ShardProcessor]() fx.Option {
+	return fx.Provide(fx.Annotate(
+		func(e Executor[SP]) ExecutorInfo { return e },
+		fx.ResultTags(`group:"shard-distributor-executors"`),
+	))
 }

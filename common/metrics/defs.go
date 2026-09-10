@@ -3113,7 +3113,7 @@ const (
 	ShardDistributorAssignLoopLoadBasedMoves
 	// ShardDistributorAssignLoopDeletedShards counts the number of shards removed (DONE status) in a rebalance cycle
 	ShardDistributorAssignLoopDeletedShards
-	// ShardDistributorAssignLoopMovedShardLoad tracks the load of a shard that was moved due to load rebalancing
+	// ShardDistributorAssignLoopMovedShardLoad counts the reported load of shards moved due to load rebalancing
 	ShardDistributorAssignLoopMovedShardLoad
 	// ShardDistributorAssignLoopDroppedDrainedShards counts drained shards taken away from an executor in a rebalance cycle
 	ShardDistributorAssignLoopDroppedDrainedShards
@@ -3135,6 +3135,10 @@ const (
 
 	// ShardDistributorAssignLoopNoActiveExecutors counts rebalance cycles that found no active executors
 	ShardDistributorAssignLoopNoActiveExecutors
+
+	// ShardDistributorErrContextCanceledCounter counts requests terminated by a canceled context or a
+	// closed stream. These are expected terminations (client disconnect, server shutdown), not failures.
+	ShardDistributorErrContextCanceledCounter
 
 	NumShardDistributorMetrics
 )
@@ -3968,7 +3972,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 
 		ShardDistributorAssignLoopLoadBasedMoves: {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
 		ShardDistributorAssignLoopDeletedShards:  {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
-		ShardDistributorAssignLoopMovedShardLoad: {metricName: "shard_distributor_shard_assign_moved_shard_load", metricType: Gauge},
+		ShardDistributorAssignLoopMovedShardLoad: {metricName: "shard_distributor_shard_assign_moved_load", metricType: Counter},
 
 		ShardDistributorAssignLoopDroppedDrainedShards: {metricName: "shard_distributor_shard_assign_dropped_drained_shards", metricType: Counter},
 		ShardDistributorDrainedShards:                  {metricName: "shard_distributor_drained_shards", metricType: Gauge},
@@ -3983,6 +3987,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		},
 		ShardDistributorIsLeader:                    {metricName: "shard_distributor_is_leader", metricType: Gauge},
 		ShardDistributorAssignLoopNoActiveExecutors: {metricName: "shard_distributor_shard_assign_no_active_executors", metricType: Counter},
+		ShardDistributorErrContextCanceledCounter:   {metricName: "shard_distributor_err_context_canceled", metricType: Counter},
 	},
 }
 
