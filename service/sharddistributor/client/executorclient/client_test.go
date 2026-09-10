@@ -41,6 +41,14 @@ func TestModule(t *testing.T) {
 	}
 
 	// Create a test app with the library, check that it starts and stops
+	// and publishes the executor as ExecutorInfo.
+	var got struct {
+		fx.In
+
+		Executor Executor[*MockShardProcessor]
+		Infos    []ExecutorInfo `group:"shard-distributor-executors"`
+	}
+
 	fxtest.New(t,
 		fx.Provide(func() Client {
 			return shardDistributorExecutorClient
@@ -53,7 +61,13 @@ func TestModule(t *testing.T) {
 			config,
 		),
 		Module[*MockShardProcessor](),
+		fx.Populate(&got),
 	).RequireStart().RequireStop()
+
+	require.Len(t, got.Infos, 1)
+	assert.Equal(t, "test-namespace", got.Infos[0].GetNamespace())
+	assert.Equal(t, got.Executor.GetExecutorID(), got.Infos[0].GetExecutorID())
+	assert.Empty(t, got.Infos[0].GetShardStatusReports())
 }
 
 func TestNewExecutor_ExecutorID(t *testing.T) {
@@ -168,6 +182,12 @@ func TestModuleWithNamespace(t *testing.T) {
 	}
 
 	// Create a test app with two namespace-specific modules using different processor types
+	var got struct {
+		fx.In
+
+		Infos []ExecutorInfo `group:"shard-distributor-executors"`
+	}
+
 	fxtest.New(t,
 		fx.Provide(func() Client {
 			return shardDistributorExecutorClient
@@ -183,5 +203,10 @@ func TestModuleWithNamespace(t *testing.T) {
 		// Two namespace-specific modules with different processor types
 		ModuleWithNamespace[*MockShardProcessor1]("namespace1"),
 		ModuleWithNamespace[*MockShardProcessor2]("namespace2"),
+		fx.Populate(&got),
 	).RequireStart().RequireStop()
+
+	require.Len(t, got.Infos, 2)
+	namespaces := []string{got.Infos[0].GetNamespace(), got.Infos[1].GetNamespace()}
+	assert.ElementsMatch(t, []string{"namespace1", "namespace2"}, namespaces)
 }
