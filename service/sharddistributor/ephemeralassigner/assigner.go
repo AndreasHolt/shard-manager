@@ -81,7 +81,7 @@ func New(timeSource clock.TimeSource, cfg *config.Config, storage store.Store, m
 		storage:    storage,
 		metrics:    metricsClient.Scope(metrics.ShardDistributorEphemeralAssignmentScope),
 	}
-	a.batcher = newShardBatcher(ephemeralBatchTimeout, ephemeralBatchCoalescingWindow, a.assignEphemeralBatch)
+	a.batcher = newShardBatcher(timeSource, ephemeralBatchTimeout, ephemeralBatchCoalescingWindow, a.assignEphemeralBatch)
 	return a
 }
 

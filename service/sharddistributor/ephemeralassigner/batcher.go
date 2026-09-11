@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/types"
 )
 
@@ -79,11 +80,12 @@ type namespaceState struct {
 //
 // Usage:
 //
-//	b := newShardBatcher(5*time.Second, 10*time.Millisecond, processFn)
+//	b := newShardBatcher(timeSource, 5*time.Second, 10*time.Millisecond, processFn)
 //	b.Start()
 //	defer b.Stop()
 //	resp, err := b.Submit(ctx, &types.GetShardOwnerRequest{Namespace: namespace, ShardKey: shardKey})
 type shardBatcher struct {
+	timeSource       clock.TimeSource
 	timeout          time.Duration
 	coalescingWindow time.Duration
 	processBatch     ephemeralAssignmentBatchFn
@@ -95,9 +97,10 @@ type shardBatcher struct {
 	wg     sync.WaitGroup
 }
 
-func newShardBatcher(timeout, coalescingWindow time.Duration, processBatch ephemeralAssignmentBatchFn) *shardBatcher {
+func newShardBatcher(timeSource clock.TimeSource, timeout, coalescingWindow time.Duration, processBatch ephemeralAssignmentBatchFn) *shardBatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &shardBatcher{
+		timeSource:       timeSource,
 		timeout:          timeout,
 		coalescingWindow: coalescingWindow,
 		processBatch:     processBatch,
@@ -201,10 +204,10 @@ func (b *shardBatcher) loop() {
 
 func (b *shardBatcher) scheduleFlush(namespace string, ready chan<- string) {
 	go func() {
-		timer := time.NewTimer(b.coalescingWindow)
+		timer := b.timeSource.NewTimer(b.coalescingWindow)
 		defer timer.Stop()
 		select {
-		case <-timer.C:
+		case <-timer.Chan():
 			select {
 			case ready <- namespace:
 			case <-b.ctx.Done():

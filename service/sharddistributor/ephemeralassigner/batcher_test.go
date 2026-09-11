@@ -35,6 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/types"
 )
 
@@ -122,7 +123,7 @@ func TestShardBatcher_Submit(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			b := newShardBatcher(time.Second, 0, tc.batchFn)
+			b := newShardBatcher(clock.NewMockedTimeSource(), time.Second, 0, tc.batchFn)
 			b.Start()
 			defer b.Stop()
 
@@ -238,7 +239,7 @@ func TestShardBatcher_MultipleNamespacesIsolated(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			b := newShardBatcher(time.Second, 0, processFnFromMap(tc.results))
+			b := newShardBatcher(clock.NewMockedTimeSource(), time.Second, 0, processFnFromMap(tc.results))
 			b.Start()
 			defer b.Stop()
 
@@ -294,7 +295,7 @@ func TestShardBatcher_ErrorPropagatedToAllCallers(t *testing.T) {
 				return nil, nil, tc.batchErr
 			}
 
-			b := newShardBatcher(time.Second, 0, batchFn)
+			b := newShardBatcher(clock.NewMockedTimeSource(), time.Second, 0, batchFn)
 			b.Start()
 			defer b.Stop()
 
@@ -347,7 +348,8 @@ func TestShardBatcher_CoalescingBehavior(t *testing.T) {
 			return out, nil, nil
 		}
 
-		b := newShardBatcher(time.Second, 100*time.Millisecond, batchFn)
+		timeSource := clock.NewMockedTimeSource()
+		b := newShardBatcher(timeSource, time.Second, 100*time.Millisecond, batchFn)
 		for _, key := range []string{"shard-1", "shard-2"} {
 			b.requestChan <- &batchRequest{
 				namespace: "ns",
@@ -357,6 +359,8 @@ func TestShardBatcher_CoalescingBehavior(t *testing.T) {
 		}
 		b.Start()
 		defer b.Stop()
+		timeSource.BlockUntil(1)
+		timeSource.Advance(100 * time.Millisecond)
 
 		select {
 		case shards := <-batchCalls:
@@ -388,7 +392,7 @@ func TestShardBatcher_CoalescingBehavior(t *testing.T) {
 			return out, nil, nil
 		}
 
-		b := newShardBatcher(time.Second, 0, batchFn)
+		b := newShardBatcher(clock.NewMockedTimeSource(), time.Second, 0, batchFn)
 		b.Start()
 		defer b.Stop()
 
@@ -442,7 +446,7 @@ func TestShardBatcher_CoalescingBehavior(t *testing.T) {
 			return out, nil, nil
 		}
 
-		b := newShardBatcher(time.Second, 0, batchFn)
+		b := newShardBatcher(clock.NewMockedTimeSource(), time.Second, 0, batchFn)
 		b.Start()
 		defer b.Stop()
 
@@ -503,7 +507,7 @@ func TestShardBatcher_ConcurrentRequestsBatchedTogether(t *testing.T) {
 				return out, nil, nil
 			}
 
-			b := newShardBatcher(time.Second, 0, batchFn)
+			b := newShardBatcher(clock.NewMockedTimeSource(), time.Second, 0, batchFn)
 			b.Start()
 			defer b.Stop()
 
@@ -552,7 +556,7 @@ func TestShardBatcher_StopDrainsAndCancelsRemainingRequests(t *testing.T) {
 				return nil, nil, nil
 			}
 
-			b := newShardBatcher(time.Second, 0, batchFn)
+			b := newShardBatcher(clock.NewMockedTimeSource(), time.Second, 0, batchFn)
 			b.Start()
 
 			errCh := make(chan error, 1)
