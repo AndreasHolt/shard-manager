@@ -22,9 +22,8 @@
 
 // Package ephemeralassigner assigns ephemeral shards to executors on demand.
 // Cache-miss GetShardOwner calls for ephemeral namespaces are coalesced: the
-// first request triggers an immediate flush and subsequent requests that arrive
-// while the flush is in-flight are batched into the next flush. Each batch is
-// planned and persisted with a single pair of storage operations.
+// first request starts a short collection window, and requests that arrive while
+// a flush is in-flight are batched into the next flush.
 package ephemeralassigner
 
 import (
@@ -45,10 +44,9 @@ import (
 
 const (
 	// ephemeralBatchTimeout is the context timeout for each coalesced batch flush.
-	// Sized as a safety net rather than a target: coalescing relies on etcd latency
-	// to widen the batching window, so a tight deadline would fail flushes exactly
-	// when batching helps most. It also has to cover a cold-cache GetExecutor, whose
-	// namespace refresh is itself bounded by refreshOperationTimeout (5s).
+	// Sized as a safety net rather than a target. It covers conflict retries and a
+	// cold-cache GetExecutor, whose namespace refresh is itself bounded by
+	// refreshOperationTimeout (5s).
 	ephemeralBatchTimeout          = 5 * time.Second
 	ephemeralBatchCoalescingWindow = 10 * time.Millisecond
 
@@ -122,46 +120,36 @@ func mapAssignError(request *types.GetShardOwnerRequest, err error) error {
 
 // assignEphemeralBatch is the ephemeralAssignmentBatchFn wired into the shardBatcher.
 // It processes a whole batch of unassigned shard keys for a single ephemeral
-// namespace using two storage operations per attempt:
-//  1. GetState reads current namespace state once for the whole batch.
-//  2. AssignShards writes all new assignments atomically in one operation.
+// namespace using up to two storage operations per attempt:
+//  1. GetState — read current namespace state once for the whole batch.
+//  2. AssignShards — write all new assignments atomically in one operation.
 //
 // Shards that already have an owner are skipped from placement,
 // the rest are placed by the load balancer and saved in a single AssignShards call
 func (a *Assigner) assignEphemeralBatch(ctx context.Context, namespace string, shardKeys []string) (map[string]*types.GetShardOwnerResponse, map[string]struct{}, error) {
-	started := a.timeSource.Now()
 	batchMetrics := a.metrics.Tagged(metrics.NamespaceTag(namespace))
 	batchMetrics.RecordHistogramValue(metrics.ShardDistributorEphemeralAssignmentBatchSize, float64(len(shardKeys)))
-	defer func() {
-		batchMetrics.RecordTimer(metrics.ShardDistributorEphemeralAssignmentBatchLatency, a.timeSource.Since(started))
-	}()
 
-	// ExponentialRetryPolicy jitters each delay so competing replicas do not
-	// retry the same namespace in lockstep.
 	retryPolicy := backoff.NewExponentialRetryPolicy(versionConflictRetryInitialInterval)
 	retryPolicy.SetMaximumInterval(versionConflictRetryMaxInterval)
 	retryPolicy.SetMaximumAttempts(versionConflictRetryMaxAttempts)
-	retrier := backoff.NewRetrier(retryPolicy, a.timeSource)
 
-	for {
-		results, drained, err := a.tryAssignEphemeralBatch(ctx, namespace, shardKeys, batchMetrics)
-		if !errors.Is(err, store.ErrVersionConflict) {
-			return results, drained, err
-		}
+	throttleRetry := backoff.NewThrottleRetry(
+		backoff.WithRetryPolicy(retryPolicy),
+		backoff.WithRetryableError(func(err error) bool {
+			return errors.Is(err, store.ErrVersionConflict)
+		}),
+		backoff.WithClock(a.timeSource),
+	)
 
-		batchMetrics.IncCounter(metrics.ShardDistributorEphemeralAssignmentBatchVersionConflicts)
-		delay := retrier.NextBackOff()
-		if delay < 0 {
-			batchMetrics.IncCounter(metrics.ShardDistributorEphemeralAssignmentBatchRetriesExhausted)
-			batchMetrics.AddCounter(metrics.ShardDistributorEphemeralAssignmentBatchRequestsExhausted, int64(len(shardKeys)))
-			return nil, nil, err
-		}
-
-		batchMetrics.IncCounter(metrics.ShardDistributorEphemeralAssignmentBatchRetries)
-		if err := a.timeSource.SleepWithContext(ctx, delay); err != nil {
-			return nil, nil, err
-		}
-	}
+	var results map[string]*types.GetShardOwnerResponse
+	var drained map[string]struct{}
+	err := throttleRetry.Do(ctx, func(ctx context.Context) error {
+		var err error
+		results, drained, err = a.tryAssignEphemeralBatch(ctx, namespace, shardKeys, batchMetrics)
+		return err
+	})
+	return results, drained, err
 }
 
 func (a *Assigner) tryAssignEphemeralBatch(
