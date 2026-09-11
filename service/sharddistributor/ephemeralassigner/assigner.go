@@ -178,16 +178,7 @@ func (a *Assigner) tryAssignEphemeralBatch(
 			NewState:         state,
 			ChangedExecutors: changedExecutors,
 		}, store.NopGuard())
-		writeResult := metrics.ShardDistributorAssignmentWriteResultSuccess
-		if writeErr != nil {
-			writeResult = metrics.ShardDistributorAssignmentWriteResultError
-			if errors.Is(writeErr, store.ErrVersionConflict) {
-				writeResult = metrics.ShardDistributorAssignmentWriteResultVersionConflict
-			}
-		}
-		batchMetrics.Tagged(
-			metrics.ShardDistributorAssignmentWriteResultTag(writeResult),
-		).IncCounter(metrics.ShardDistributorEphemeralAssignmentWriteAttempts)
+		recordAssignmentWriteAttempt(batchMetrics, writeErr)
 
 		if writeErr != nil {
 			if errors.Is(writeErr, store.ErrVersionConflict) {
@@ -209,6 +200,19 @@ func (a *Assigner) tryAssignEphemeralBatch(
 	}
 
 	return buildResults(namespace, shardKeys, executorByShard, executorOwners), drained, nil
+}
+
+func recordAssignmentWriteAttempt(scope metrics.Scope, err error) {
+	writeResult := metrics.ShardDistributorAssignmentWriteResultSuccess
+	if err != nil {
+		writeResult = metrics.ShardDistributorAssignmentWriteResultError
+		if errors.Is(err, store.ErrVersionConflict) {
+			writeResult = metrics.ShardDistributorAssignmentWriteResultVersionConflict
+		}
+	}
+	scope.Tagged(
+		metrics.ShardDistributorAssignmentWriteResultTag(writeResult),
+	).IncCounter(metrics.ShardDistributorEphemeralAssignmentWriteAttempts)
 }
 
 // resolveOwners splits the requested shards into those already assigned to an
