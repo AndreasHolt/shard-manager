@@ -23,7 +23,8 @@
 // Package ephemeralassigner assigns ephemeral shards to executors on demand.
 // Cache-miss GetShardOwner calls for ephemeral namespaces are coalesced: the
 // first request starts a short collection window, and requests that arrive while
-// a flush is in-flight are batched into the next flush.
+// a flush is in-flight are batched into the next flush. Each flush reads state
+// once and persists all new assignments in one write.
 package ephemeralassigner
 
 import (
@@ -191,7 +192,8 @@ func (a *Assigner) tryAssignEphemeralBatch(
 
 		if writeErr != nil {
 			if errors.Is(writeErr, store.ErrVersionConflict) {
-				// Preserve the sentinel so the batch retry loop can detect it.
+				// Return the version-conflict sentinel wrapped so the batch retry can
+				// detect it with errors.Is.
 				return nil, nil, fmt.Errorf("assign ephemeral shards: %w", writeErr)
 			}
 			return nil, nil, &types.InternalServiceError{Message: fmt.Sprintf("assign ephemeral shards: %v", writeErr)}

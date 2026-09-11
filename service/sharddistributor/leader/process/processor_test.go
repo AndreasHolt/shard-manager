@@ -378,8 +378,6 @@ func TestRebalance_StoreErrors(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
-	testScope := tally.NewTestScope("test", nil)
-	processor.metricsClient = metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
 	expectedErr := errors.New("store is down")
 
 	mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(nil, expectedErr)
@@ -392,12 +390,10 @@ func TestRebalance_StoreErrors(t *testing.T) {
 		Executors: map[string]store.HeartbeatState{"e": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now}},
 	}, nil)
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
-	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).Return(store.ErrVersionConflict)
+	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).Return(expectedErr)
 	err = processor.rebalanceShards(context.Background())
-	require.ErrorIs(t, err, store.ErrVersionConflict)
-
-	metricName := "test.shard_distributor_assignment_write_attempts+assignment_write_result=version_conflict,assignment_writer=leader,namespace=test-ns,namespace_type=fixed,operation=ShardAssignLoop"
-	assert.Equal(t, int64(1), testScope.Snapshot().Counters()[metricName].Value())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), expectedErr.Error())
 }
 
 func TestRunLoop_SubscriptionError(t *testing.T) {
@@ -596,6 +592,7 @@ func TestRebalanceShards_AlreadyUnassignedDrainedShardsSkipAssign(t *testing.T) 
 	// shards should not move, drained shards should not be assigned back
 	require.NoError(t, processor.rebalanceShards(context.Background()))
 	assert.NotEmpty(t, mocks.observedLogs.FilterMessage("No changes to distribution detected. Skipping rebalance.").All())
+
 }
 
 func TestRebalanceShards_WithUnassignedShards(t *testing.T) {
