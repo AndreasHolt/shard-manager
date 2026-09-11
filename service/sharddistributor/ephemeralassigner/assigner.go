@@ -187,7 +187,7 @@ func (a *Assigner) tryAssignEphemeralBatch(
 		}
 		batchMetrics.Tagged(
 			metrics.ShardDistributorAssignmentWriteResultTag(writeResult),
-		).IncCounter(metrics.ShardDistributorAssignmentWriteAttempts)
+		).IncCounter(metrics.ShardDistributorEphemeralAssignmentWriteAttempts)
 
 		if writeErr != nil {
 			if errors.Is(writeErr, store.ErrVersionConflict) {

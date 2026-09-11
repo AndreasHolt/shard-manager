@@ -2,7 +2,6 @@ package process
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"math/rand"
@@ -501,16 +500,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		ExecutorsToDelete: staleExecutors,
 		ChangedExecutors:  executorsWithChangedAssignments,
 	}, p.election.Guard())
-	writeResult := metrics.ShardDistributorAssignmentWriteResultSuccess
-	if err != nil {
-		writeResult = metrics.ShardDistributorAssignmentWriteResultError
-		if errors.Is(err, store.ErrVersionConflict) {
-			writeResult = metrics.ShardDistributorAssignmentWriteResultVersionConflict
-		}
-	}
-	metricsLoopScope.Tagged(
-		metrics.ShardDistributorAssignmentWriteResultTag(writeResult),
-	).IncCounter(metrics.ShardDistributorAssignmentWriteAttempts)
 	if err != nil {
 		return fmt.Errorf("assign shards: %w", err)
 	}
