@@ -509,7 +509,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		}
 	}
 	metricsLoopScope.Tagged(
-		metrics.ShardDistributorAssignmentWriterTag(metrics.ShardDistributorAssignmentWriterLeader),
 		metrics.ShardDistributorAssignmentWriteResultTag(writeResult),
 	).IncCounter(metrics.ShardDistributorAssignmentWriteAttempts)
 	if err != nil {

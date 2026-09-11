@@ -186,7 +186,6 @@ func (a *Assigner) tryAssignEphemeralBatch(
 			}
 		}
 		batchMetrics.Tagged(
-			metrics.ShardDistributorAssignmentWriterTag(metrics.ShardDistributorAssignmentWriterEphemeral),
 			metrics.ShardDistributorAssignmentWriteResultTag(writeResult),
 		).IncCounter(metrics.ShardDistributorAssignmentWriteAttempts)
 

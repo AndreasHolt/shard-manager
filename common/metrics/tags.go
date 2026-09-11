@@ -26,9 +26,6 @@ import (
 )
 
 const (
-	ShardDistributorAssignmentWriterEphemeral = "ephemeral"
-	ShardDistributorAssignmentWriterLeader    = "leader"
-
 	ShardDistributorAssignmentWriteResultSuccess         = "success"
 	ShardDistributorAssignmentWriteResultVersionConflict = "version_conflict"
 	ShardDistributorAssignmentWriteResultError           = "error"
@@ -79,7 +76,6 @@ const (
 	isRetry                   = "is_retry"
 	queryConsistencyLevel     = "query_consistency_level"
 	budgetManagerName         = "budget_manager_name"
-	assignmentWriter          = "assignment_writer"
 	assignmentWriteResult     = "assignment_write_result"
 
 	// limiter-side tags
@@ -359,10 +355,6 @@ func NamespaceTag(namespace string) Tag {
 
 func NamespaceTypeTag(namespaceType string) Tag {
 	return metricWithUnknown("namespace_type", namespaceType)
-}
-
-func ShardDistributorAssignmentWriterTag(value string) Tag {
-	return metricWithUnknown(assignmentWriter, value)
 }
 
 func ShardDistributorAssignmentWriteResultTag(value string) Tag {
