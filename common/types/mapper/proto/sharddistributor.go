@@ -418,118 +418,6 @@ func ToShardDistributorGetNamespaceStateRequest(t *sharddistributorv1.GetNamespa
 	}
 }
 
-// FromShardDistributorGetNamespaceLoadsRequest converts a types.GetNamespaceLoadsRequest to a sharddistributor GetNamespaceLoadsRequest.
-func FromShardDistributorGetNamespaceLoadsRequest(t *types.GetNamespaceLoadsRequest) *sharddistributorv1.GetNamespaceLoadsRequest {
-	if t == nil {
-		return nil
-	}
-	return &sharddistributorv1.GetNamespaceLoadsRequest{
-		Namespace: t.GetNamespace(),
-	}
-}
-
-// ToShardDistributorGetNamespaceLoadsRequest converts a sharddistributor GetNamespaceLoadsRequest to a types.GetNamespaceLoadsRequest.
-func ToShardDistributorGetNamespaceLoadsRequest(t *sharddistributorv1.GetNamespaceLoadsRequest) *types.GetNamespaceLoadsRequest {
-	if t == nil {
-		return nil
-	}
-	return &types.GetNamespaceLoadsRequest{
-		Namespace: t.GetNamespace(),
-	}
-}
-
-// FromShardDistributorGetNamespaceLoadsResponse converts a types.GetNamespaceLoadsResponse to a sharddistributor GetNamespaceLoadsResponse.
-func FromShardDistributorGetNamespaceLoadsResponse(t *types.GetNamespaceLoadsResponse) *sharddistributorv1.GetNamespaceLoadsResponse {
-	if t == nil {
-		return nil
-	}
-
-	var executors []*sharddistributorv1.ExecutorShardLoads
-	if t.GetExecutors() != nil {
-		executors = make([]*sharddistributorv1.ExecutorShardLoads, 0, len(t.GetExecutors()))
-		for _, executor := range t.GetExecutors() {
-			executors = append(executors, fromShardDistributorExecutorShardLoads(executor))
-		}
-	}
-
-	return &sharddistributorv1.GetNamespaceLoadsResponse{
-		Namespace: t.GetNamespace(),
-		Executors: executors,
-	}
-}
-
-func fromShardDistributorExecutorShardLoads(t *types.ExecutorShardLoads) *sharddistributorv1.ExecutorShardLoads {
-	if t == nil {
-		return nil
-	}
-
-	var shards []*sharddistributorv1.ShardLoad
-	if t.GetShards() != nil {
-		shards = make([]*sharddistributorv1.ShardLoad, 0, len(t.GetShards()))
-		for _, shard := range t.GetShards() {
-			if shard == nil {
-				shards = append(shards, nil)
-				continue
-			}
-			shards = append(shards, &sharddistributorv1.ShardLoad{
-				ShardKey:     shard.GetShardKey(),
-				SmoothedLoad: fromDoubleValue(shard.GetSmoothedLoad()),
-			})
-		}
-	}
-
-	return &sharddistributorv1.ExecutorShardLoads{
-		ExecutorId: t.GetExecutorID(),
-		Shards:     shards,
-	}
-}
-
-// ToShardDistributorGetNamespaceLoadsResponse converts a sharddistributor GetNamespaceLoadsResponse to a types.GetNamespaceLoadsResponse.
-func ToShardDistributorGetNamespaceLoadsResponse(t *sharddistributorv1.GetNamespaceLoadsResponse) *types.GetNamespaceLoadsResponse {
-	if t == nil {
-		return nil
-	}
-
-	var executors []*types.ExecutorShardLoads
-	if t.GetExecutors() != nil {
-		executors = make([]*types.ExecutorShardLoads, 0, len(t.GetExecutors()))
-		for _, executor := range t.GetExecutors() {
-			executors = append(executors, toShardDistributorExecutorShardLoads(executor))
-		}
-	}
-
-	return &types.GetNamespaceLoadsResponse{
-		Namespace: t.GetNamespace(),
-		Executors: executors,
-	}
-}
-
-func toShardDistributorExecutorShardLoads(t *sharddistributorv1.ExecutorShardLoads) *types.ExecutorShardLoads {
-	if t == nil {
-		return nil
-	}
-
-	var shards []*types.ShardLoad
-	if t.GetShards() != nil {
-		shards = make([]*types.ShardLoad, 0, len(t.GetShards()))
-		for _, shard := range t.GetShards() {
-			if shard == nil {
-				shards = append(shards, nil)
-				continue
-			}
-			shards = append(shards, &types.ShardLoad{
-				ShardKey:     shard.GetShardKey(),
-				SmoothedLoad: toDoubleValue(shard.GetSmoothedLoad()),
-			})
-		}
-	}
-
-	return &types.ExecutorShardLoads{
-		ExecutorID: t.GetExecutorId(),
-		Shards:     shards,
-	}
-}
-
 // FromShardDistributorGetNamespaceStateResponse converts a types.GetNamespaceStateResponse to a sharddistributor GetNamespaceStateResponse.
 func FromShardDistributorGetNamespaceStateResponse(t *types.GetNamespaceStateResponse) *sharddistributorv1.GetNamespaceStateResponse {
 	if t == nil {
@@ -669,6 +557,110 @@ func toShardDistributorNamespaceExecutorState(ex *sharddistributorv1.NamespaceEx
 		LastHeartbeat:  lastHB,
 		Metadata:       ex.GetMetadata(),
 		AssignedShards: assigned,
+	}
+}
+
+// FromShardDistributorGetNamespaceLoadsRequest converts a types.GetNamespaceLoadsRequest to a sharddistributor GetNamespaceLoadsRequest.
+func FromShardDistributorGetNamespaceLoadsRequest(t *types.GetNamespaceLoadsRequest) *sharddistributorv1.GetNamespaceLoadsRequest {
+	if t == nil {
+		return nil
+	}
+	return &sharddistributorv1.GetNamespaceLoadsRequest{
+		Namespace: t.GetNamespace(),
+	}
+}
+
+// ToShardDistributorGetNamespaceLoadsRequest converts a sharddistributor GetNamespaceLoadsRequest to a types.GetNamespaceLoadsRequest.
+func ToShardDistributorGetNamespaceLoadsRequest(t *sharddistributorv1.GetNamespaceLoadsRequest) *types.GetNamespaceLoadsRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.GetNamespaceLoadsRequest{
+		Namespace: t.GetNamespace(),
+	}
+}
+
+// FromShardDistributorGetNamespaceLoadsResponse converts a types.GetNamespaceLoadsResponse to a sharddistributor GetNamespaceLoadsResponse.
+func FromShardDistributorGetNamespaceLoadsResponse(t *types.GetNamespaceLoadsResponse) *sharddistributorv1.GetNamespaceLoadsResponse {
+	if t == nil {
+		return nil
+	}
+
+	var executors []*sharddistributorv1.ExecutorShardLoads
+	if t.GetExecutors() != nil {
+		executors = make([]*sharddistributorv1.ExecutorShardLoads, 0, len(t.GetExecutors()))
+		for _, executor := range t.GetExecutors() {
+			executors = append(executors, fromShardDistributorExecutorShardLoads(executor))
+		}
+	}
+
+	return &sharddistributorv1.GetNamespaceLoadsResponse{
+		Namespace: t.GetNamespace(),
+		Executors: executors,
+	}
+}
+
+func fromShardDistributorExecutorShardLoads(t *types.ExecutorShardLoads) *sharddistributorv1.ExecutorShardLoads {
+	if t == nil {
+		return nil
+	}
+
+	var shards []*sharddistributorv1.ShardLoad
+	if t.GetShards() != nil {
+		shards = make([]*sharddistributorv1.ShardLoad, 0, len(t.GetShards()))
+		for _, shard := range t.GetShards() {
+			shards = append(shards, &sharddistributorv1.ShardLoad{
+				ShardKey:     shard.GetShardKey(),
+				SmoothedLoad: fromDoubleValue(shard.GetSmoothedLoad()),
+			})
+		}
+	}
+
+	return &sharddistributorv1.ExecutorShardLoads{
+		ExecutorId: t.GetExecutorID(),
+		Shards:     shards,
+	}
+}
+
+// ToShardDistributorGetNamespaceLoadsResponse converts a sharddistributor GetNamespaceLoadsResponse to a types.GetNamespaceLoadsResponse.
+func ToShardDistributorGetNamespaceLoadsResponse(t *sharddistributorv1.GetNamespaceLoadsResponse) *types.GetNamespaceLoadsResponse {
+	if t == nil {
+		return nil
+	}
+
+	var executors []*types.ExecutorShardLoads
+	if t.GetExecutors() != nil {
+		executors = make([]*types.ExecutorShardLoads, 0, len(t.GetExecutors()))
+		for _, executor := range t.GetExecutors() {
+			executors = append(executors, toShardDistributorExecutorShardLoads(executor))
+		}
+	}
+
+	return &types.GetNamespaceLoadsResponse{
+		Namespace: t.GetNamespace(),
+		Executors: executors,
+	}
+}
+
+func toShardDistributorExecutorShardLoads(t *sharddistributorv1.ExecutorShardLoads) *types.ExecutorShardLoads {
+	if t == nil {
+		return nil
+	}
+
+	var shards []*types.ShardLoad
+	if t.GetShards() != nil {
+		shards = make([]*types.ShardLoad, 0, len(t.GetShards()))
+		for _, shard := range t.GetShards() {
+			shards = append(shards, &types.ShardLoad{
+				ShardKey:     shard.GetShardKey(),
+				SmoothedLoad: toDoubleValue(shard.GetSmoothedLoad()),
+			})
+		}
+	}
+
+	return &types.ExecutorShardLoads{
+		ExecutorID: t.GetExecutorId(),
+		Shards:     shards,
 	}
 }
 

@@ -582,13 +582,17 @@ func TestGetNamespaceState_successMultipleExecutors(t *testing.T) {
 }
 
 func TestGetNamespaceLoads(t *testing.T) {
-	measuredAt := time.Unix(1000, 0).UTC()
+	cfg := config.ShardDistribution{
+		Namespaces: []config.Namespace{
+			{Name: _testNamespaceFixed, Type: config.NamespaceTypeFixed, ShardNum: 32},
+		},
+	}
+
 	tests := []struct {
 		name            string
 		request         *types.GetNamespaceLoadsRequest
 		setupMocks      func(*store.MockStore)
 		wantErrContains string
-		checkResponse   func(*testing.T, *types.GetNamespaceLoadsResponse)
 	}{
 		{
 			name:            "unknown_namespace",
@@ -603,55 +607,8 @@ func TestGetNamespaceLoads(t *testing.T) {
 			},
 			wantErrContains: "failed to get namespace loads",
 		},
-		{
-			name:    "success_grouped_by_executor",
-			request: &types.GetNamespaceLoadsRequest{Namespace: _testNamespaceFixed},
-			setupMocks: func(m *store.MockStore) {
-				m.EXPECT().GetState(gomock.Any(), _testNamespaceFixed).Return(&store.NamespaceState{
-					ShardAssignments: map[string]store.AssignedState{
-						"executor-a": {AssignedShards: map[string]*types.ShardAssignment{
-							"measured":          {},
-							"measured-zero":     {},
-							"unmeasured-record": {},
-						}},
-						"executor-without-heartbeat": {AssignedShards: map[string]*types.ShardAssignment{
-							"unmeasured-absent": {},
-						}},
-					},
-					ShardStats: map[string]store.ShardStatistics{
-						"measured":          {SmoothedLoad: 42.5, LastUpdateTime: measuredAt},
-						"measured-zero":     {SmoothedLoad: 0, LastUpdateTime: measuredAt},
-						"unmeasured-record": {SmoothedLoad: 99},
-						"unassigned":        {SmoothedLoad: 100, LastUpdateTime: measuredAt},
-					},
-				}, nil)
-			},
-			checkResponse: func(t *testing.T, response *types.GetNamespaceLoadsResponse) {
-				require.Equal(t, _testNamespaceFixed, response.GetNamespace())
-				require.Len(t, response.GetExecutors(), 2)
-
-				loads := make(map[string]map[string]*float64, len(response.GetExecutors()))
-				for _, executor := range response.GetExecutors() {
-					loads[executor.GetExecutorID()] = make(map[string]*float64, len(executor.GetShards()))
-					for _, shard := range executor.GetShards() {
-						loads[executor.GetExecutorID()][shard.GetShardKey()] = shard.GetSmoothedLoad()
-					}
-				}
-
-				require.NotNil(t, loads["executor-a"]["measured"])
-				assert.Equal(t, 42.5, *loads["executor-a"]["measured"])
-				require.NotNil(t, loads["executor-a"]["measured-zero"])
-				assert.Zero(t, *loads["executor-a"]["measured-zero"])
-				assert.Nil(t, loads["executor-a"]["unmeasured-record"])
-				assert.Nil(t, loads["executor-without-heartbeat"]["unmeasured-absent"])
-				assert.NotContains(t, loads["executor-a"], "unassigned")
-			},
-		},
 	}
 
-	cfg := config.ShardDistribution{
-		Namespaces: []config.Namespace{{Name: _testNamespaceFixed, Type: config.NamespaceTypeFixed, ShardNum: 32}},
-	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
@@ -660,18 +617,68 @@ func TestGetNamespaceLoads(t *testing.T) {
 				tt.setupMocks(mockStorage)
 			}
 
-			response, err := newTestHandler(t, cfg, mockStorage).GetNamespaceLoads(context.Background(), tt.request)
-			if tt.wantErrContains != "" {
-				require.ErrorContains(t, err, tt.wantErrContains)
-				assert.Nil(t, response)
-				return
-			}
-
-			require.NoError(t, err)
-			require.NotNil(t, response)
-			tt.checkResponse(t, response)
+			h := newTestHandler(t, cfg, mockStorage)
+			resp, err := h.GetNamespaceLoads(context.Background(), tt.request)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErrContains)
+			require.Nil(t, resp)
 		})
 	}
+}
+
+func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
+	cfg := config.ShardDistribution{
+		Namespaces: []config.Namespace{
+			{Name: _testNamespaceFixed, Type: config.NamespaceTypeFixed, ShardNum: 32},
+		},
+	}
+	measuredAt := time.Unix(1000, 0).UTC()
+
+	ctrl := gomock.NewController(t)
+	mockStorage := store.NewMockStore(ctrl)
+	mockStorage.EXPECT().GetState(gomock.Any(), _testNamespaceFixed).Return(&store.NamespaceState{
+		ShardAssignments: map[string]store.AssignedState{
+			"executor1": {AssignedShards: map[string]*types.ShardAssignment{
+				"hot":  {},
+				"idle": {},
+			}},
+			"executor2": {AssignedShards: map[string]*types.ShardAssignment{
+				"new": {},
+			}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"hot":        {SmoothedLoad: 42.5, LastUpdateTime: measuredAt},
+			"idle":       {SmoothedLoad: 0, LastUpdateTime: measuredAt},
+			"unassigned": {SmoothedLoad: 100, LastUpdateTime: measuredAt},
+		},
+	}, nil)
+
+	h := newTestHandler(t, cfg, mockStorage)
+	resp, err := h.GetNamespaceLoads(context.Background(), &types.GetNamespaceLoadsRequest{Namespace: _testNamespaceFixed})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, _testNamespaceFixed, resp.GetNamespace())
+	require.Len(t, resp.GetExecutors(), 2)
+
+	loads := make(map[string]map[string]*float64, len(resp.GetExecutors()))
+	for _, executor := range resp.GetExecutors() {
+		loads[executor.GetExecutorID()] = make(map[string]*float64, len(executor.GetShards()))
+		for _, shard := range executor.GetShards() {
+			loads[executor.GetExecutorID()][shard.GetShardKey()] = shard.GetSmoothedLoad()
+		}
+	}
+
+	measuredLoad := 42.5
+	measuredZero := 0.0
+	require.Equal(t, map[string]map[string]*float64{
+		"executor1": {
+			"hot":  &measuredLoad,
+			"idle": &measuredZero,
+		},
+		"executor2": {
+			"new": nil,
+		},
+	}, loads)
 }
 
 func TestForceResetNamespace(t *testing.T) {

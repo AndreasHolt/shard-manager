@@ -231,22 +231,26 @@ func (h *handlerImpl) GetNamespaceLoads(ctx context.Context, request *types.GetN
 
 	h.startWG.Wait()
 
-	namespace := request.GetNamespace()
-	if slices.IndexFunc(h.shardDistributionCfg.Namespaces, func(configured config.Namespace) bool {
-		return configured.Name == namespace
-	}) == -1 {
-		return nil, &types.NamespaceNotFoundError{Namespace: namespace}
+	namespaceIdx := slices.IndexFunc(h.shardDistributionCfg.Namespaces, func(namespace config.Namespace) bool {
+		return namespace.Name == request.GetNamespace()
+	})
+	if namespaceIdx == -1 {
+		return nil, &types.NamespaceNotFoundError{
+			Namespace: request.GetNamespace(),
+		}
 	}
 
-	state, err := h.storage.GetState(ctx, namespace)
+	state, err := h.storage.GetState(ctx, request.GetNamespace())
 	if err != nil {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get namespace loads: %v", err)}
 	}
 
 	executors := make([]*types.ExecutorShardLoads, 0, len(state.ShardAssignments))
-	for executorID, assignment := range state.ShardAssignments {
-		shards := make([]*types.ShardLoad, 0, len(assignment.AssignedShards))
-		for shardKey := range assignment.AssignedShards {
+
+	for executorID, assignedState := range state.ShardAssignments {
+		shards := make([]*types.ShardLoad, 0, len(assignedState.AssignedShards))
+
+		for shardKey := range assignedState.AssignedShards {
 			var smoothedLoad *float64
 			if statistics, ok := state.ShardStats[shardKey]; ok && !statistics.LastUpdateTime.IsZero() {
 				load := statistics.SmoothedLoad
@@ -264,7 +268,7 @@ func (h *handlerImpl) GetNamespaceLoads(ctx context.Context, request *types.GetN
 	}
 
 	return &types.GetNamespaceLoadsResponse{
-		Namespace: namespace,
+		Namespace: request.GetNamespace(),
 		Executors: executors,
 	}, nil
 }

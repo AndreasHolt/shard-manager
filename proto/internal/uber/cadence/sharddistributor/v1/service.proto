@@ -42,7 +42,8 @@ service ShardDistributorAPI {
   // GetNamespaceState returns a snapshot of all executors in a namespace and their assigned shards
   rpc GetNamespaceState(GetNamespaceStateRequest) returns (GetNamespaceStateResponse);
 
-  // GetNamespaceLoads returns every assigned shard grouped by executor. Load is absent until measured.
+  // GetNamespaceLoads returns a snapshot of smoothed load information for assigned shards,
+  // grouped by executor. Smoothed load is absent if not yet measured.
   rpc GetNamespaceLoads(GetNamespaceLoadsRequest) returns (GetNamespaceLoadsResponse);
 
   // GetExecutorState returns the state of an executor within a namespace, looked up by executor id
@@ -122,6 +123,21 @@ message GetNamespaceStateResponse {
   repeated NamespaceExecutorState executors = 2;
 }
 
+message NamespaceExecutorState {
+  string executor_id = 1;
+  ExecutorStatus status = 2;
+  google.protobuf.Timestamp last_heartbeat = 3;
+  map<string, string> metadata = 4;
+  repeated AssignedShardState assigned_shards = 5;
+}
+
+message AssignedShardState {
+  string shard_key = 1;
+  AssignmentStatus assignment_status = 2;
+  // Mod revision of the executor's assigned_state etcd key when this snapshot was read.
+  int64 assigned_state_mod_revision = 3;
+}
+
 message GetNamespaceLoadsRequest {
   string namespace = 1;
 }
@@ -140,21 +156,6 @@ message ShardLoad {
   string shard_key = 1;
   // Absent when the shard has not reported a load measurement.
   google.protobuf.DoubleValue smoothed_load = 2;
-}
-
-message NamespaceExecutorState {
-  string executor_id = 1;
-  ExecutorStatus status = 2;
-  google.protobuf.Timestamp last_heartbeat = 3;
-  map<string, string> metadata = 4;
-  repeated AssignedShardState assigned_shards = 5;
-}
-
-message AssignedShardState {
-  string shard_key = 1;
-  AssignmentStatus assignment_status = 2;
-  // Mod revision of the executor's assigned_state etcd key when this snapshot was read.
-  int64 assigned_state_mod_revision = 3;
 }
 
 message GetExecutorStateRequest {

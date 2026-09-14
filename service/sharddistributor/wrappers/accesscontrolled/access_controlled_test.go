@@ -124,13 +124,19 @@ func TestAccessControlledHandler_GetNamespaceLoads(t *testing.T) {
 			authz := authorization.NewMockAuthorizer(ctrl)
 			request := &types.GetNamespaceLoadsRequest{Namespace: testNamespace}
 
-			authz.EXPECT().Authorize(gomock.Any(), &authorization.Attributes{
-				APIName:    "GetNamespaceLoads",
-				Namespace:  testNamespace,
-				Permission: authorization.PermissionRead,
-			}).Return(tc.authorizeResult, tc.authorizeErr).Times(1)
+			authz.EXPECT().
+				Authorize(gomock.Any(), &authorization.Attributes{
+					APIName:    "GetNamespaceLoads",
+					Namespace:  testNamespace,
+					Permission: authorization.PermissionRead,
+				}).
+				Return(tc.authorizeResult, tc.authorizeErr).
+				Times(1)
 			if tc.expectInnerCalled {
-				inner.EXPECT().GetNamespaceLoads(gomock.Any(), request).Return(&types.GetNamespaceLoadsResponse{Namespace: testNamespace}, nil).Times(1)
+				inner.EXPECT().
+					GetNamespaceLoads(gomock.Any(), request).
+					Return(&types.GetNamespaceLoadsResponse{Namespace: testNamespace}, nil).
+					Times(1)
 			}
 
 			resp, err := NewHandler(inner, authz).GetNamespaceLoads(context.Background(), request)
@@ -140,6 +146,7 @@ func TestAccessControlledHandler_GetNamespaceLoads(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			require.NotNil(t, resp)
 			assert.Equal(t, testNamespace, resp.GetNamespace())
 		})
 	}
