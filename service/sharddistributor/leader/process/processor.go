@@ -294,6 +294,10 @@ func (p *namespaceProcessor) runShardStatsCleanupLoop(ctx context.Context) {
 			p.logger.Info("Periodic shard stats cleanup triggered.")
 			namespaceState, err := p.shardStore.GetState(ctx, p.namespaceCfg.Name)
 			if err != nil {
+				if ctx.Err() != nil {
+					p.logger.Info("Shard stats cleanup loop cancelled")
+					return
+				}
 				p.logger.Error("Failed to get state for shard stats cleanup", tag.Error(err))
 				continue
 			}
@@ -303,6 +307,10 @@ func (p *namespaceProcessor) runShardStatsCleanupLoop(ctx context.Context) {
 				continue
 			}
 			if err := p.shardStore.DeleteShardStats(ctx, p.namespaceCfg.Name, staleShardStats, p.election.Guard()); err != nil {
+				if ctx.Err() != nil {
+					p.logger.Info("Shard stats cleanup loop cancelled")
+					return
+				}
 				p.logger.Error("Failed to delete stale shard stats", tag.Error(err))
 			}
 		}
