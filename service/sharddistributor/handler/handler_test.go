@@ -632,24 +632,22 @@ func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
 			{Name: _testNamespaceFixed, Type: config.NamespaceTypeFixed, ShardNum: 32},
 		},
 	}
-	measuredAt := time.Unix(1000, 0).UTC()
-
 	ctrl := gomock.NewController(t)
 	mockStorage := store.NewMockStore(ctrl)
 	mockStorage.EXPECT().GetState(gomock.Any(), _testNamespaceFixed).Return(&store.NamespaceState{
 		ShardAssignments: map[string]store.AssignedState{
 			"executor1": {AssignedShards: map[string]*types.ShardAssignment{
-				"measured": {},
-				"idle":     {},
+				"nonzero": {},
+				"idle":    {},
 			}},
 			"executor2": {AssignedShards: map[string]*types.ShardAssignment{
 				"new": {},
 			}},
 		},
 		ShardStats: map[string]store.ShardStatistics{
-			"measured":   {SmoothedLoad: 42.5, LastUpdateTime: measuredAt},
-			"idle":       {SmoothedLoad: 0, LastUpdateTime: measuredAt},
-			"unassigned": {SmoothedLoad: 100, LastUpdateTime: measuredAt},
+			"nonzero":    {SmoothedLoad: 42.5},
+			"idle":       {SmoothedLoad: 0},
+			"unassigned": {SmoothedLoad: 100},
 		},
 	}, nil)
 
@@ -670,8 +668,8 @@ func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
 
 	require.Equal(t, map[string]map[string]float64{
 		"executor1": {
-			"measured": 42.5,
-			"idle":     0,
+			"nonzero": 42.5,
+			"idle":    0,
 		},
 		"executor2": {
 			"new": 0,
