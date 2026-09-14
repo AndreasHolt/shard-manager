@@ -6,6 +6,7 @@ const (
 	ShardDistributorSpectatorGetShardOwnerOperationTagName       = "ShardDistributorSpectatorGetShardOwner"
 	ShardDistributorSpectatorInspectShardOperationTagName        = "ShardDistributorSpectatorInspectShard"
 	ShardDistributorSpectatorGetNamespaceStateOperationTagName   = "ShardDistributorSpectatorGetNamespaceState"
+	ShardDistributorSpectatorGetNamespaceLoadsOperationTagName   = "ShardDistributorSpectatorGetNamespaceLoads"
 	ShardDistributorSpectatorGetExecutorStateOperationTagName    = "ShardDistributorSpectatorGetExecutorState"
 	ShardDistributorSpectatorListNamespacesOperationTagName      = "ShardDistributorSpectatorListNamespaces"
 	ShardDistributorSpectatorWatchNamespaceStateOperationTagName = "ShardDistributorSpectatorWatchNamespaceState"

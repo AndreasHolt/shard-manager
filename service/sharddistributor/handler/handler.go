@@ -226,6 +226,49 @@ func (h *handlerImpl) GetNamespaceState(ctx context.Context, request *types.GetN
 	}, nil
 }
 
+func (h *handlerImpl) GetNamespaceLoads(ctx context.Context, request *types.GetNamespaceLoadsRequest) (resp *types.GetNamespaceLoadsResponse, retError error) {
+	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+
+	h.startWG.Wait()
+
+	namespace := request.GetNamespace()
+	if slices.IndexFunc(h.shardDistributionCfg.Namespaces, func(configured config.Namespace) bool {
+		return configured.Name == namespace
+	}) == -1 {
+		return nil, &types.NamespaceNotFoundError{Namespace: namespace}
+	}
+
+	state, err := h.storage.GetState(ctx, namespace)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get namespace loads: %v", err)}
+	}
+
+	executors := make([]*types.ExecutorShardLoads, 0, len(state.ShardAssignments))
+	for executorID, assignment := range state.ShardAssignments {
+		shards := make([]*types.ShardLoad, 0, len(assignment.AssignedShards))
+		for shardKey := range assignment.AssignedShards {
+			var smoothedLoad *float64
+			if statistics, ok := state.ShardStats[shardKey]; ok && !statistics.LastUpdateTime.IsZero() {
+				load := statistics.SmoothedLoad
+				smoothedLoad = &load
+			}
+			shards = append(shards, &types.ShardLoad{
+				ShardKey:     shardKey,
+				SmoothedLoad: smoothedLoad,
+			})
+		}
+		executors = append(executors, &types.ExecutorShardLoads{
+			ExecutorID: executorID,
+			Shards:     shards,
+		})
+	}
+
+	return &types.GetNamespaceLoadsResponse{
+		Namespace: namespace,
+		Executors: executors,
+	}, nil
+}
+
 // GetExecutorState looks up a single executor within a namespace by executor id
 func (h *handlerImpl) GetExecutorState(ctx context.Context, request *types.GetExecutorStateRequest) (resp *types.GetExecutorStateResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()

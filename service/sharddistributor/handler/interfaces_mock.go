@@ -101,6 +101,21 @@ func (mr *MockHandlerMockRecorder) GetExecutorState(arg0, arg1 any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetExecutorState", reflect.TypeOf((*MockHandler)(nil).GetExecutorState), arg0, arg1)
 }
 
+// GetNamespaceLoads mocks base method.
+func (m *MockHandler) GetNamespaceLoads(arg0 context.Context, arg1 *types.GetNamespaceLoadsRequest) (*types.GetNamespaceLoadsResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetNamespaceLoads", arg0, arg1)
+	ret0, _ := ret[0].(*types.GetNamespaceLoadsResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetNamespaceLoads indicates an expected call of GetNamespaceLoads.
+func (mr *MockHandlerMockRecorder) GetNamespaceLoads(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNamespaceLoads", reflect.TypeOf((*MockHandler)(nil).GetNamespaceLoads), arg0, arg1)
+}
+
 // GetNamespaceState mocks base method.
 func (m *MockHandler) GetNamespaceState(arg0 context.Context, arg1 *types.GetNamespaceStateRequest) (*types.GetNamespaceStateResponse, error) {
 	m.ctrl.T.Helper()

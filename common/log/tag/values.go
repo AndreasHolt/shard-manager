@@ -457,6 +457,7 @@ var (
 	ShardDistributorClientOperationGetShardOwner       = clientOperation("shard-distributor-get-shard-owner")
 	ShardDistributorClientOperationInspectShard        = clientOperation("shard-distributor-inspect-shard")
 	ShardDistributorClientOperationGetNamespaceState   = clientOperation("shard-distributor-get-namespace-state")
+	ShardDistributorClientOperationGetNamespaceLoads   = clientOperation("shard-distributor-get-namespace-loads")
 	ShardDistributorClientOperationGetExecutorState    = clientOperation("shard-distributor-get-executor-state")
 	ShardDistributorClientOperationListNamespaces      = clientOperation("shard-distributor-list-namespaces")
 	ShardDistributorClientOperationWatchNamespaceState = clientOperation("shard-distributor-watch-namespace-state")

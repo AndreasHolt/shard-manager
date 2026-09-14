@@ -25,6 +25,7 @@ package testdata
 import (
 	"time"
 
+	"github.com/cadence-workflow/shard-manager/common"
 	"github.com/cadence-workflow/shard-manager/common/types"
 )
 
@@ -98,6 +99,21 @@ var (
 				Metadata:      map[string]string{"k": "v"},
 				AssignedShards: []*types.ExecutorAssignedShardState{
 					{ShardKey: "a", AssignmentStatus: types.AssignmentStatusREADY, AssignedStateModRevision: 7},
+				},
+			},
+		},
+	}
+	ShardDistributorGetNamespaceLoadsRequest = types.GetNamespaceLoadsRequest{
+		Namespace: "namespace",
+	}
+	ShardDistributorGetNamespaceLoadsResponse = types.GetNamespaceLoadsResponse{
+		Namespace: "namespace",
+		Executors: []*types.ExecutorShardLoads{
+			{
+				ExecutorID: "executor-1",
+				Shards: []*types.ShardLoad{
+					{ShardKey: "measured", SmoothedLoad: common.Float64Ptr(0.5)},
+					{ShardKey: "unmeasured"},
 				},
 			},
 		},

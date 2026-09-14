@@ -41,6 +41,11 @@ func (g GRPCHandler) GetExecutorState(ctx context.Context, request *sharddistrib
 	return proto.FromShardDistributorGetExecutorStateResponse(response), proto.FromError(err)
 }
 
+func (g GRPCHandler) GetNamespaceLoads(ctx context.Context, request *sharddistributorv1.GetNamespaceLoadsRequest) (*sharddistributorv1.GetNamespaceLoadsResponse, error) {
+	response, err := g.h.GetNamespaceLoads(ctx, proto.ToShardDistributorGetNamespaceLoadsRequest(request))
+	return proto.FromShardDistributorGetNamespaceLoadsResponse(response), proto.FromError(err)
+}
+
 func (g GRPCHandler) GetNamespaceState(ctx context.Context, request *sharddistributorv1.GetNamespaceStateRequest) (*sharddistributorv1.GetNamespaceStateResponse, error) {
 	response, err := g.h.GetNamespaceState(ctx, proto.ToShardDistributorGetNamespaceStateRequest(request))
 	return proto.FromShardDistributorGetNamespaceStateResponse(response), proto.FromError(err)

@@ -35,6 +35,11 @@ func (g sharddistributorClient) GetExecutorState(ctx context.Context, gp1 *types
 	return proto.ToShardDistributorGetExecutorStateResponse(response), proto.ToError(err)
 }
 
+func (g sharddistributorClient) GetNamespaceLoads(ctx context.Context, gp1 *types.GetNamespaceLoadsRequest, p1 ...yarpc.CallOption) (gp2 *types.GetNamespaceLoadsResponse, err error) {
+	response, err := g.c.GetNamespaceLoads(ctx, proto.FromShardDistributorGetNamespaceLoadsRequest(gp1), p1...)
+	return proto.ToShardDistributorGetNamespaceLoadsResponse(response), proto.ToError(err)
+}
+
 func (g sharddistributorClient) GetNamespaceState(ctx context.Context, gp1 *types.GetNamespaceStateRequest, p1 ...yarpc.CallOption) (gp2 *types.GetNamespaceStateResponse, err error) {
 	response, err := g.c.GetNamespaceState(ctx, proto.FromShardDistributorGetNamespaceStateRequest(gp1), p1...)
 	return proto.ToShardDistributorGetNamespaceStateResponse(response), proto.ToError(err)

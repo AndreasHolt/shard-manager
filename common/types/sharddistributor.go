@@ -105,6 +105,74 @@ func (v *GetNamespaceStateResponse) GetExecutors() (o []*NamespaceExecutorState)
 	return
 }
 
+type GetNamespaceLoadsRequest struct {
+	Namespace string
+}
+
+func (v *GetNamespaceLoadsRequest) GetNamespace() (o string) {
+	if v != nil {
+		return v.Namespace
+	}
+	return
+}
+
+type GetNamespaceLoadsResponse struct {
+	Namespace string
+	Executors []*ExecutorShardLoads
+}
+
+func (v *GetNamespaceLoadsResponse) GetNamespace() (o string) {
+	if v != nil {
+		return v.Namespace
+	}
+	return
+}
+
+func (v *GetNamespaceLoadsResponse) GetExecutors() (o []*ExecutorShardLoads) {
+	if v != nil {
+		return v.Executors
+	}
+	return
+}
+
+type ExecutorShardLoads struct {
+	ExecutorID string
+	Shards     []*ShardLoad
+}
+
+func (v *ExecutorShardLoads) GetExecutorID() (o string) {
+	if v != nil {
+		return v.ExecutorID
+	}
+	return
+}
+
+func (v *ExecutorShardLoads) GetShards() (o []*ShardLoad) {
+	if v != nil {
+		return v.Shards
+	}
+	return
+}
+
+type ShardLoad struct {
+	ShardKey     string
+	SmoothedLoad *float64
+}
+
+func (v *ShardLoad) GetShardKey() (o string) {
+	if v != nil {
+		return v.ShardKey
+	}
+	return
+}
+
+func (v *ShardLoad) GetSmoothedLoad() (o *float64) {
+	if v != nil {
+		return v.SmoothedLoad
+	}
+	return
+}
+
 type GetExecutorStateRequest struct {
 	Namespace  string
 	ExecutorID string
