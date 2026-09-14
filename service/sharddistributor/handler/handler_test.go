@@ -658,15 +658,15 @@ func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
 	require.Equal(t, _testNamespaceFixed, resp.GetNamespace())
 	require.Len(t, resp.GetExecutors(), 2)
 
-	loads := make(map[string]map[string]float64, len(resp.GetExecutors()))
+	actualLoads := make(map[string]map[string]float64, len(resp.GetExecutors()))
 	for _, executor := range resp.GetExecutors() {
-		loads[executor.GetExecutorID()] = make(map[string]float64, len(executor.GetShards()))
+		actualLoads[executor.GetExecutorID()] = make(map[string]float64, len(executor.GetShards()))
 		for _, shard := range executor.GetShards() {
-			loads[executor.GetExecutorID()][shard.GetShardKey()] = shard.GetSmoothedLoad()
+			actualLoads[executor.GetExecutorID()][shard.GetShardKey()] = shard.GetSmoothedLoad()
 		}
 	}
 
-	require.Equal(t, map[string]map[string]float64{
+	expectedLoads := map[string]map[string]float64{
 		"executor1": {
 			"nonzero": 42.5,
 			"idle":    0,
@@ -674,7 +674,8 @@ func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
 		"executor2": {
 			"new": 0,
 		},
-	}, loads)
+	}
+	require.Equal(t, expectedLoads, actualLoads)
 }
 
 func TestForceResetNamespace(t *testing.T) {
