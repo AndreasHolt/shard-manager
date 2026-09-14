@@ -660,23 +660,21 @@ func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
 	require.Equal(t, _testNamespaceFixed, resp.GetNamespace())
 	require.Len(t, resp.GetExecutors(), 2)
 
-	loads := make(map[string]map[string]*float64, len(resp.GetExecutors()))
+	loads := make(map[string]map[string]float64, len(resp.GetExecutors()))
 	for _, executor := range resp.GetExecutors() {
-		loads[executor.GetExecutorID()] = make(map[string]*float64, len(executor.GetShards()))
+		loads[executor.GetExecutorID()] = make(map[string]float64, len(executor.GetShards()))
 		for _, shard := range executor.GetShards() {
 			loads[executor.GetExecutorID()][shard.GetShardKey()] = shard.GetSmoothedLoad()
 		}
 	}
 
-	measuredLoad := 42.5
-	measuredZero := 0.0
-	require.Equal(t, map[string]map[string]*float64{
+	require.Equal(t, map[string]map[string]float64{
 		"executor1": {
-			"measured": &measuredLoad,
-			"idle":     &measuredZero,
+			"measured": 42.5,
+			"idle":     0,
 		},
 		"executor2": {
-			"new": nil,
+			"new": 0,
 		},
 	}, loads)
 }

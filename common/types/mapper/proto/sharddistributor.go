@@ -611,7 +611,7 @@ func fromShardDistributorExecutorShardLoads(t *types.ExecutorShardLoads) *shardd
 		for _, shard := range t.GetShards() {
 			shards = append(shards, &sharddistributorv1.ShardLoad{
 				ShardKey:     shard.GetShardKey(),
-				SmoothedLoad: fromDoubleValue(shard.GetSmoothedLoad()),
+				SmoothedLoad: shard.GetSmoothedLoad(),
 			})
 		}
 	}
@@ -653,7 +653,7 @@ func toShardDistributorExecutorShardLoads(t *sharddistributorv1.ExecutorShardLoa
 		for _, shard := range t.GetShards() {
 			shards = append(shards, &types.ShardLoad{
 				ShardKey:     shard.GetShardKey(),
-				SmoothedLoad: toDoubleValue(shard.GetSmoothedLoad()),
+				SmoothedLoad: shard.GetSmoothedLoad(),
 			})
 		}
 	}

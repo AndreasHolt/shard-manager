@@ -25,7 +25,6 @@ package testdata
 import (
 	"time"
 
-	"github.com/cadence-workflow/shard-manager/common"
 	"github.com/cadence-workflow/shard-manager/common/types"
 )
 
@@ -112,8 +111,8 @@ var (
 			{
 				ExecutorID: "executor-1",
 				Shards: []*types.ShardLoad{
-					{ShardKey: "measured", SmoothedLoad: common.Float64Ptr(0.5)},
-					{ShardKey: "unmeasured"},
+					{ShardKey: "nonzero", SmoothedLoad: 0.5},
+					{ShardKey: "zero", SmoothedLoad: 0},
 				},
 			},
 		},

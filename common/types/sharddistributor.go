@@ -156,7 +156,7 @@ func (v *ExecutorShardLoads) GetShards() (o []*ShardLoad) {
 
 type ShardLoad struct {
 	ShardKey     string
-	SmoothedLoad *float64
+	SmoothedLoad float64
 }
 
 func (v *ShardLoad) GetShardKey() (o string) {
@@ -166,7 +166,7 @@ func (v *ShardLoad) GetShardKey() (o string) {
 	return
 }
 
-func (v *ShardLoad) GetSmoothedLoad() (o *float64) {
+func (v *ShardLoad) GetSmoothedLoad() (o float64) {
 	if v != nil {
 		return v.SmoothedLoad
 	}

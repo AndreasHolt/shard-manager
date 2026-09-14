@@ -23,7 +23,6 @@ syntax = "proto3";
 package uber.cadence.sharddistributor.v1;
 
 import "google/protobuf/timestamp.proto";
-import "google/protobuf/wrappers.proto";
 import "uber/cadence/sharddistributor/v1/executor.proto";
 
 option go_package = "github.com/cadence-workflow/shard-manager/.gen/proto/sharddistributor/v1;sharddistributorv1";
@@ -42,8 +41,8 @@ service ShardDistributorAPI {
   // GetNamespaceState returns a snapshot of all executors in a namespace and their assigned shards
   rpc GetNamespaceState(GetNamespaceStateRequest) returns (GetNamespaceStateResponse);
 
-  // GetNamespaceLoads returns a snapshot of smoothed load information for assigned shards,
-  // grouped by executor. Smoothed load is absent if not yet measured.
+  // GetNamespaceLoads returns a snapshot of smoothed loads for assigned shards, grouped by executor.
+  // Shards without a load measurement have a smoothed load of zero.
   rpc GetNamespaceLoads(GetNamespaceLoadsRequest) returns (GetNamespaceLoadsResponse);
 
   // GetExecutorState returns the state of an executor within a namespace, looked up by executor id
@@ -154,8 +153,7 @@ message ExecutorShardLoads {
 
 message ShardLoad {
   string shard_key = 1;
-  // Absent when the shard has not reported a load measurement.
-  google.protobuf.DoubleValue smoothed_load = 2;
+  double smoothed_load = 2;
 }
 
 message GetExecutorStateRequest {

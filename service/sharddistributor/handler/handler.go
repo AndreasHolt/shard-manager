@@ -251,14 +251,9 @@ func (h *handlerImpl) GetNamespaceLoads(ctx context.Context, request *types.GetN
 		shards := make([]*types.ShardLoad, 0, len(assignedState.AssignedShards))
 
 		for shardKey := range assignedState.AssignedShards {
-			var smoothedLoad *float64
-			if statistics, ok := state.ShardStats[shardKey]; ok && !statistics.LastUpdateTime.IsZero() {
-				load := statistics.SmoothedLoad
-				smoothedLoad = &load
-			}
 			shards = append(shards, &types.ShardLoad{
 				ShardKey:     shardKey,
-				SmoothedLoad: smoothedLoad,
+				SmoothedLoad: state.ShardStats[shardKey].SmoothedLoad,
 			})
 		}
 		executors = append(executors, &types.ExecutorShardLoads{
