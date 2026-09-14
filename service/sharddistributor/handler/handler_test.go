@@ -639,15 +639,15 @@ func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
 	mockStorage.EXPECT().GetState(gomock.Any(), _testNamespaceFixed).Return(&store.NamespaceState{
 		ShardAssignments: map[string]store.AssignedState{
 			"executor1": {AssignedShards: map[string]*types.ShardAssignment{
-				"hot":  {},
-				"idle": {},
+				"measured": {},
+				"idle":     {},
 			}},
 			"executor2": {AssignedShards: map[string]*types.ShardAssignment{
 				"new": {},
 			}},
 		},
 		ShardStats: map[string]store.ShardStatistics{
-			"hot":        {SmoothedLoad: 42.5, LastUpdateTime: measuredAt},
+			"measured":   {SmoothedLoad: 42.5, LastUpdateTime: measuredAt},
 			"idle":       {SmoothedLoad: 0, LastUpdateTime: measuredAt},
 			"unassigned": {SmoothedLoad: 100, LastUpdateTime: measuredAt},
 		},
@@ -672,8 +672,8 @@ func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
 	measuredZero := 0.0
 	require.Equal(t, map[string]map[string]*float64{
 		"executor1": {
-			"hot":  &measuredLoad,
-			"idle": &measuredZero,
+			"measured": &measuredLoad,
+			"idle":     &measuredZero,
 		},
 		"executor2": {
 			"new": nil,
