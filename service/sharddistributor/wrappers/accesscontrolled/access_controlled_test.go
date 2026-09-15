@@ -90,7 +90,8 @@ func TestAccessControlledHandler_GetNamespaceState(t *testing.T) {
 					Times(1)
 			}
 
-			resp, err := NewHandler(inner, authz).GetNamespaceState(context.Background(), request)
+			wrapped := NewHandler(inner, authz)
+			resp, err := wrapped.GetNamespaceState(context.Background(), request)
 
 			if tc.expectErr != nil {
 				assert.Nil(t, resp)
@@ -139,7 +140,8 @@ func TestAccessControlledHandler_GetFullNamespaceState(t *testing.T) {
 					Times(1)
 			}
 
-			resp, err := NewHandler(inner, authz).GetFullNamespaceState(context.Background(), request)
+			wrapped := NewHandler(inner, authz)
+			resp, err := wrapped.GetFullNamespaceState(context.Background(), request)
 			if tc.expectErr != nil {
 				assert.Nil(t, resp)
 				assert.ErrorIs(t, err, tc.expectErr)
