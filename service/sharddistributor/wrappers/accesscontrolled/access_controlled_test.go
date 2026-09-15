@@ -72,26 +72,25 @@ func TestAccessControlledHandler_GetNamespaceState(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			inner := handler.NewMockHandler(ctrl)
 			authz := authorization.NewMockAuthorizer(ctrl)
+			request := &types.GetNamespaceStateRequest{Namespace: testNamespace}
 
-			expectedAttrs := &authorization.Attributes{
-				APIName:    "GetNamespaceState",
-				Namespace:  testNamespace,
-				Permission: authorization.PermissionRead,
-			}
 			authz.EXPECT().
-				Authorize(gomock.Any(), expectedAttrs).
+				Authorize(gomock.Any(), &authorization.Attributes{
+					APIName:    "GetNamespaceState",
+					Namespace:  testNamespace,
+					Permission: authorization.PermissionRead,
+				}).
 				Return(tc.authorizeResult, tc.authorizeErr).
 				Times(1)
 
 			if tc.expectInnerCalled {
 				inner.EXPECT().
-					GetNamespaceState(gomock.Any(), gomock.Any()).
+					GetNamespaceState(gomock.Any(), request).
 					Return(&types.GetNamespaceStateResponse{Namespace: testNamespace}, nil).
 					Times(1)
 			}
 
-			wrapped := NewHandler(inner, authz)
-			resp, err := wrapped.GetNamespaceState(context.Background(), &types.GetNamespaceStateRequest{Namespace: testNamespace})
+			resp, err := NewHandler(inner, authz).GetNamespaceState(context.Background(), request)
 
 			if tc.expectErr != nil {
 				assert.Nil(t, resp)
@@ -99,7 +98,8 @@ func TestAccessControlledHandler_GetNamespaceState(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, testNamespace, resp.Namespace)
+			require.NotNil(t, resp)
+			assert.Equal(t, testNamespace, resp.GetNamespace())
 		})
 	}
 }
