@@ -93,15 +93,15 @@ func TestFromShardDistributorGetNamespaceStateResponse(t *testing.T) {
 	}
 }
 
-func TestFromShardDistributorGetNamespaceLoadsRequest(t *testing.T) {
-	for _, item := range []*types.GetNamespaceLoadsRequest{nil, {}, &testdata.ShardDistributorGetNamespaceLoadsRequest} {
-		assert.Equal(t, item, ToShardDistributorGetNamespaceLoadsRequest(FromShardDistributorGetNamespaceLoadsRequest(item)))
+func TestFromShardDistributorGetFullNamespaceStateRequest(t *testing.T) {
+	for _, item := range []*types.GetFullNamespaceStateRequest{nil, {}, &testdata.ShardDistributorGetFullNamespaceStateRequest} {
+		assert.Equal(t, item, ToShardDistributorGetFullNamespaceStateRequest(FromShardDistributorGetFullNamespaceStateRequest(item)))
 	}
 }
 
-func TestFromShardDistributorGetNamespaceLoadsResponse(t *testing.T) {
-	for _, item := range []*types.GetNamespaceLoadsResponse{nil, {}, &testdata.ShardDistributorGetNamespaceLoadsResponse} {
-		assert.Equal(t, item, ToShardDistributorGetNamespaceLoadsResponse(FromShardDistributorGetNamespaceLoadsResponse(item)))
+func TestFromShardDistributorGetFullNamespaceStateResponse(t *testing.T) {
+	for _, item := range []*types.GetFullNamespaceStateResponse{nil, {}, &testdata.ShardDistributorGetFullNamespaceStateResponse} {
+		assert.Equal(t, item, ToShardDistributorGetFullNamespaceStateResponse(FromShardDistributorGetFullNamespaceStateResponse(item)))
 	}
 }
 

@@ -120,16 +120,16 @@ func (c *sharddistributorClient) GetExecutorState(ctx context.Context, gp1 *type
 	return
 }
 
-func (c *sharddistributorClient) GetNamespaceLoads(ctx context.Context, gp1 *types.GetNamespaceLoadsRequest, p1 ...yarpc.CallOption) (gp2 *types.GetNamespaceLoadsResponse, err error) {
+func (c *sharddistributorClient) GetFullNamespaceState(ctx context.Context, gp1 *types.GetFullNamespaceStateRequest, p1 ...yarpc.CallOption) (gp2 *types.GetFullNamespaceStateResponse, err error) {
 	fakeErr := c.fakeErrFn(c.errorRate)
 	var forwardCall bool
 	if forwardCall = c.forwardCallFn(fakeErr); forwardCall {
-		gp2, err = c.client.GetNamespaceLoads(ctx, gp1, p1...)
+		gp2, err = c.client.GetFullNamespaceState(ctx, gp1, p1...)
 	}
 
 	if fakeErr != nil {
 		c.logger.Error(msgShardDistributorInjectedFakeErr,
-			tag.ShardDistributorClientOperationGetNamespaceLoads,
+			tag.ShardDistributorClientOperationGetFullNamespaceState,
 			tag.Error(fakeErr),
 			tag.Bool(forwardCall),
 			tag.ClientError(err),

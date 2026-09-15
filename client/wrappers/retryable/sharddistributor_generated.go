@@ -71,11 +71,11 @@ func (c *sharddistributorClient) GetExecutorState(ctx context.Context, gp1 *type
 	return resp, err
 }
 
-func (c *sharddistributorClient) GetNamespaceLoads(ctx context.Context, gp1 *types.GetNamespaceLoadsRequest, p1 ...yarpc.CallOption) (gp2 *types.GetNamespaceLoadsResponse, err error) {
-	var resp *types.GetNamespaceLoadsResponse
+func (c *sharddistributorClient) GetFullNamespaceState(ctx context.Context, gp1 *types.GetFullNamespaceStateRequest, p1 ...yarpc.CallOption) (gp2 *types.GetFullNamespaceStateResponse, err error) {
+	var resp *types.GetFullNamespaceStateResponse
 	op := func(ctx context.Context) error {
 		var err error
-		resp, err = c.client.GetNamespaceLoads(ctx, gp1, p1...)
+		resp, err = c.client.GetFullNamespaceState(ctx, gp1, p1...)
 		return err
 	}
 	err = c.throttleRetry.Do(ctx, op)

@@ -104,7 +104,7 @@ func TestAccessControlledHandler_GetNamespaceState(t *testing.T) {
 	}
 }
 
-func TestAccessControlledHandler_GetNamespaceLoads(t *testing.T) {
+func TestAccessControlledHandler_GetFullNamespaceState(t *testing.T) {
 	tests := []struct {
 		name              string
 		authorizeResult   authorization.Result
@@ -122,11 +122,11 @@ func TestAccessControlledHandler_GetNamespaceLoads(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			inner := handler.NewMockHandler(ctrl)
 			authz := authorization.NewMockAuthorizer(ctrl)
-			request := &types.GetNamespaceLoadsRequest{Namespace: testNamespace}
+			request := &types.GetFullNamespaceStateRequest{Namespace: testNamespace}
 
 			authz.EXPECT().
 				Authorize(gomock.Any(), &authorization.Attributes{
-					APIName:    "GetNamespaceLoads",
+					APIName:    "GetFullNamespaceState",
 					Namespace:  testNamespace,
 					Permission: authorization.PermissionRead,
 				}).
@@ -134,12 +134,12 @@ func TestAccessControlledHandler_GetNamespaceLoads(t *testing.T) {
 				Times(1)
 			if tc.expectInnerCalled {
 				inner.EXPECT().
-					GetNamespaceLoads(gomock.Any(), request).
-					Return(&types.GetNamespaceLoadsResponse{Namespace: testNamespace}, nil).
+					GetFullNamespaceState(gomock.Any(), request).
+					Return(&types.GetFullNamespaceStateResponse{Namespace: testNamespace}, nil).
 					Times(1)
 			}
 
-			resp, err := NewHandler(inner, authz).GetNamespaceLoads(context.Background(), request)
+			resp, err := NewHandler(inner, authz).GetFullNamespaceState(context.Background(), request)
 			if tc.expectErr != nil {
 				assert.Nil(t, resp)
 				assert.ErrorIs(t, err, tc.expectErr)

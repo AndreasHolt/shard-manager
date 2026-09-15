@@ -560,107 +560,373 @@ func toShardDistributorNamespaceExecutorState(ex *sharddistributorv1.NamespaceEx
 	}
 }
 
-// FromShardDistributorGetNamespaceLoadsRequest converts a types.GetNamespaceLoadsRequest to a sharddistributor GetNamespaceLoadsRequest.
-func FromShardDistributorGetNamespaceLoadsRequest(t *types.GetNamespaceLoadsRequest) *sharddistributorv1.GetNamespaceLoadsRequest {
+// FromShardDistributorGetFullNamespaceStateRequest converts a types.GetFullNamespaceStateRequest to a sharddistributor GetFullNamespaceStateRequest.
+func FromShardDistributorGetFullNamespaceStateRequest(t *types.GetFullNamespaceStateRequest) *sharddistributorv1.GetFullNamespaceStateRequest {
 	if t == nil {
 		return nil
 	}
-	return &sharddistributorv1.GetNamespaceLoadsRequest{
+	return &sharddistributorv1.GetFullNamespaceStateRequest{
 		Namespace: t.GetNamespace(),
 	}
 }
 
-// ToShardDistributorGetNamespaceLoadsRequest converts a sharddistributor GetNamespaceLoadsRequest to a types.GetNamespaceLoadsRequest.
-func ToShardDistributorGetNamespaceLoadsRequest(t *sharddistributorv1.GetNamespaceLoadsRequest) *types.GetNamespaceLoadsRequest {
+// ToShardDistributorGetFullNamespaceStateRequest converts a sharddistributor GetFullNamespaceStateRequest to a types.GetFullNamespaceStateRequest.
+func ToShardDistributorGetFullNamespaceStateRequest(t *sharddistributorv1.GetFullNamespaceStateRequest) *types.GetFullNamespaceStateRequest {
 	if t == nil {
 		return nil
 	}
-	return &types.GetNamespaceLoadsRequest{
+	return &types.GetFullNamespaceStateRequest{
 		Namespace: t.GetNamespace(),
 	}
 }
 
-// FromShardDistributorGetNamespaceLoadsResponse converts a types.GetNamespaceLoadsResponse to a sharddistributor GetNamespaceLoadsResponse.
-func FromShardDistributorGetNamespaceLoadsResponse(t *types.GetNamespaceLoadsResponse) *sharddistributorv1.GetNamespaceLoadsResponse {
+// FromShardDistributorGetFullNamespaceStateResponse converts a types.GetFullNamespaceStateResponse to a sharddistributor GetFullNamespaceStateResponse.
+func FromShardDistributorGetFullNamespaceStateResponse(t *types.GetFullNamespaceStateResponse) *sharddistributorv1.GetFullNamespaceStateResponse {
 	if t == nil {
 		return nil
 	}
 
-	var executors []*sharddistributorv1.ExecutorShardLoads
+	var executors map[string]*sharddistributorv1.HeartbeatState
 	if t.GetExecutors() != nil {
-		executors = make([]*sharddistributorv1.ExecutorShardLoads, 0, len(t.GetExecutors()))
-		for _, executor := range t.GetExecutors() {
-			executors = append(executors, fromShardDistributorExecutorShardLoads(executor))
+		executors = make(map[string]*sharddistributorv1.HeartbeatState, len(t.GetExecutors()))
+		for executorID, executor := range t.GetExecutors() {
+			executors[executorID] = fromShardDistributorHeartbeatState(executor)
 		}
 	}
 
-	return &sharddistributorv1.GetNamespaceLoadsResponse{
-		Namespace: t.GetNamespace(),
-		Executors: executors,
+	var shardStats map[string]*sharddistributorv1.ShardStatistics
+	if t.GetShardStats() != nil {
+		shardStats = make(map[string]*sharddistributorv1.ShardStatistics, len(t.GetShardStats()))
+		for shardKey, statistics := range t.GetShardStats() {
+			shardStats[shardKey] = fromShardDistributorShardStatistics(statistics)
+		}
+	}
+
+	var shardAssignments map[string]*sharddistributorv1.AssignedState
+	if t.GetShardAssignments() != nil {
+		shardAssignments = make(map[string]*sharddistributorv1.AssignedState, len(t.GetShardAssignments()))
+		for executorID, assignment := range t.GetShardAssignments() {
+			shardAssignments[executorID] = fromShardDistributorAssignedState(assignment)
+		}
+	}
+
+	var drainedHosts map[string]*sharddistributorv1.DrainedHost
+	if t.GetDrainedHosts() != nil {
+		drainedHosts = make(map[string]*sharddistributorv1.DrainedHost, len(t.GetDrainedHosts()))
+		for hostname, host := range t.GetDrainedHosts() {
+			drainedHosts[hostname] = fromShardDistributorDrainedHost(host)
+		}
+	}
+
+	return &sharddistributorv1.GetFullNamespaceStateResponse{
+		Namespace:        t.GetNamespace(),
+		Executors:        executors,
+		ShardStats:       shardStats,
+		ShardAssignments: shardAssignments,
+		DrainedShards:    t.GetDrainedShards(),
+		DrainedHosts:     drainedHosts,
 	}
 }
 
-func fromShardDistributorExecutorShardLoads(t *types.ExecutorShardLoads) *sharddistributorv1.ExecutorShardLoads {
+func fromShardDistributorHeartbeatState(t *types.HeartbeatState) *sharddistributorv1.HeartbeatState {
 	if t == nil {
 		return nil
 	}
 
-	var shards []*sharddistributorv1.ShardLoad
-	if t.GetShards() != nil {
-		shards = make([]*sharddistributorv1.ShardLoad, 0, len(t.GetShards()))
-		for _, shard := range t.GetShards() {
-			shards = append(shards, &sharddistributorv1.ShardLoad{
-				ShardKey:     shard.GetShardKey(),
-				SmoothedLoad: shard.GetSmoothedLoad(),
-			})
+	var status sharddistributorv1.ExecutorStatus
+	switch t.GetStatus() {
+	case types.ExecutorStatusINVALID:
+		status = sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_INVALID
+	case types.ExecutorStatusACTIVE:
+		status = sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_ACTIVE
+	case types.ExecutorStatusDRAINING:
+		status = sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_DRAINING
+	case types.ExecutorStatusDRAINED:
+		status = sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_DRAINED
+	default:
+		status = sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_INVALID
+	}
+
+	var reportedShards map[string]*sharddistributorv1.ShardStatusReport
+	if t.GetReportedShards() != nil {
+		reportedShards = make(map[string]*sharddistributorv1.ShardStatusReport, len(t.GetReportedShards()))
+		for shardKey, report := range t.GetReportedShards() {
+			var shardStatus sharddistributorv1.ShardStatus
+			switch report.GetStatus() {
+			case types.ShardStatusINVALID:
+				shardStatus = sharddistributorv1.ShardStatus_SHARD_STATUS_INVALID
+			case types.ShardStatusREADY:
+				shardStatus = sharddistributorv1.ShardStatus_SHARD_STATUS_READY
+			case types.ShardStatusDONE:
+				shardStatus = sharddistributorv1.ShardStatus_SHARD_STATUS_DONE
+			default:
+				shardStatus = sharddistributorv1.ShardStatus_SHARD_STATUS_INVALID
+			}
+			reportedShards[shardKey] = &sharddistributorv1.ShardStatusReport{
+				Status:    shardStatus,
+				ShardLoad: report.GetShardLoad(),
+			}
 		}
 	}
 
-	return &sharddistributorv1.ExecutorShardLoads{
-		ExecutorId: t.GetExecutorID(),
-		Shards:     shards,
+	lastHeartbeat := t.GetLastHeartbeat()
+	return &sharddistributorv1.HeartbeatState{
+		LastHeartbeat:  timeToTimestamp(&lastHeartbeat),
+		Status:         status,
+		ReportedShards: reportedShards,
+		Metadata:       t.GetMetadata(),
 	}
 }
 
-// ToShardDistributorGetNamespaceLoadsResponse converts a sharddistributor GetNamespaceLoadsResponse to a types.GetNamespaceLoadsResponse.
-func ToShardDistributorGetNamespaceLoadsResponse(t *sharddistributorv1.GetNamespaceLoadsResponse) *types.GetNamespaceLoadsResponse {
+func fromShardDistributorShardStatistics(t *types.ShardStatistics) *sharddistributorv1.ShardStatistics {
+	if t == nil {
+		return nil
+	}
+	lastUpdateTime := t.GetLastUpdateTime()
+	lastMoveTime := t.GetLastMoveTime()
+	return &sharddistributorv1.ShardStatistics{
+		SmoothedLoad:   t.GetSmoothedLoad(),
+		LastUpdateTime: timeToTimestamp(&lastUpdateTime),
+		LastMoveTime:   timeToTimestamp(&lastMoveTime),
+	}
+}
+
+func fromShardDistributorAssignedState(t *types.AssignedState) *sharddistributorv1.AssignedState {
 	if t == nil {
 		return nil
 	}
 
-	var executors []*types.ExecutorShardLoads
+	var assignedShards map[string]*sharddistributorv1.ShardAssignment
+	if t.GetAssignedShards() != nil {
+		assignedShards = make(map[string]*sharddistributorv1.ShardAssignment, len(t.GetAssignedShards()))
+		for shardKey, assignment := range t.GetAssignedShards() {
+			var status sharddistributorv1.AssignmentStatus
+			switch assignment.GetStatus() {
+			case types.AssignmentStatusINVALID:
+				status = sharddistributorv1.AssignmentStatus_ASSIGNMENT_STATUS_INVALID
+			case types.AssignmentStatusREADY:
+				status = sharddistributorv1.AssignmentStatus_ASSIGNMENT_STATUS_READY
+			default:
+				status = sharddistributorv1.AssignmentStatus_ASSIGNMENT_STATUS_INVALID
+			}
+			assignedShards[shardKey] = &sharddistributorv1.ShardAssignment{Status: status}
+		}
+	}
+
+	var handoverStats map[string]*sharddistributorv1.ShardHandoverStats
+	if t.GetShardHandoverStats() != nil {
+		handoverStats = make(map[string]*sharddistributorv1.ShardHandoverStats, len(t.GetShardHandoverStats()))
+		for shardKey, statistics := range t.GetShardHandoverStats() {
+			var handoverType sharddistributorv1.HandoverType
+			switch statistics.GetHandoverType() {
+			case types.HandoverTypeINVALID:
+				handoverType = sharddistributorv1.HandoverType_HANDOVER_TYPE_INVALID
+			case types.HandoverTypeGRACEFUL:
+				handoverType = sharddistributorv1.HandoverType_HANDOVER_TYPE_GRACEFUL
+			case types.HandoverTypeEMERGENCY:
+				handoverType = sharddistributorv1.HandoverType_HANDOVER_TYPE_EMERGENCY
+			default:
+				handoverType = sharddistributorv1.HandoverType_HANDOVER_TYPE_INVALID
+			}
+			previousHeartbeat := statistics.GetPreviousExecutorLastHeartbeatTime()
+			handoverStats[shardKey] = &sharddistributorv1.ShardHandoverStats{
+				PreviousExecutorLastHeartbeatTime: timeToTimestamp(&previousHeartbeat),
+				HandoverType:                      handoverType,
+			}
+		}
+	}
+
+	lastUpdated := t.GetLastUpdated()
+	return &sharddistributorv1.AssignedState{
+		AssignedShards:     assignedShards,
+		ShardHandoverStats: handoverStats,
+		LastUpdated:        timeToTimestamp(&lastUpdated),
+		ModRevision:        t.GetModRevision(),
+	}
+}
+
+func fromShardDistributorDrainedHost(t *types.DrainedHost) *sharddistributorv1.DrainedHost {
+	if t == nil {
+		return nil
+	}
+	drainedAt := t.GetDrainedAt()
+	return &sharddistributorv1.DrainedHost{
+		Hostname:  t.GetHostname(),
+		DrainedAt: timeToTimestamp(&drainedAt),
+		DrainedBy: t.GetDrainedBy(),
+		Reason:    t.GetReason(),
+	}
+}
+
+// ToShardDistributorGetFullNamespaceStateResponse converts a sharddistributor GetFullNamespaceStateResponse to a types.GetFullNamespaceStateResponse.
+func ToShardDistributorGetFullNamespaceStateResponse(t *sharddistributorv1.GetFullNamespaceStateResponse) *types.GetFullNamespaceStateResponse {
+	if t == nil {
+		return nil
+	}
+
+	var executors map[string]*types.HeartbeatState
 	if t.GetExecutors() != nil {
-		executors = make([]*types.ExecutorShardLoads, 0, len(t.GetExecutors()))
-		for _, executor := range t.GetExecutors() {
-			executors = append(executors, toShardDistributorExecutorShardLoads(executor))
+		executors = make(map[string]*types.HeartbeatState, len(t.GetExecutors()))
+		for executorID, executor := range t.GetExecutors() {
+			executors[executorID] = toShardDistributorHeartbeatState(executor)
 		}
 	}
 
-	return &types.GetNamespaceLoadsResponse{
-		Namespace: t.GetNamespace(),
-		Executors: executors,
+	var shardStats map[string]*types.ShardStatistics
+	if t.GetShardStats() != nil {
+		shardStats = make(map[string]*types.ShardStatistics, len(t.GetShardStats()))
+		for shardKey, statistics := range t.GetShardStats() {
+			shardStats[shardKey] = toShardDistributorShardStatistics(statistics)
+		}
+	}
+
+	var shardAssignments map[string]*types.AssignedState
+	if t.GetShardAssignments() != nil {
+		shardAssignments = make(map[string]*types.AssignedState, len(t.GetShardAssignments()))
+		for executorID, assignment := range t.GetShardAssignments() {
+			shardAssignments[executorID] = toShardDistributorAssignedState(assignment)
+		}
+	}
+
+	var drainedHosts map[string]*types.DrainedHost
+	if t.GetDrainedHosts() != nil {
+		drainedHosts = make(map[string]*types.DrainedHost, len(t.GetDrainedHosts()))
+		for hostname, host := range t.GetDrainedHosts() {
+			drainedHosts[hostname] = toShardDistributorDrainedHost(host)
+		}
+	}
+
+	return &types.GetFullNamespaceStateResponse{
+		Namespace:        t.GetNamespace(),
+		Executors:        executors,
+		ShardStats:       shardStats,
+		ShardAssignments: shardAssignments,
+		DrainedShards:    t.GetDrainedShards(),
+		DrainedHosts:     drainedHosts,
 	}
 }
 
-func toShardDistributorExecutorShardLoads(t *sharddistributorv1.ExecutorShardLoads) *types.ExecutorShardLoads {
+func toShardDistributorHeartbeatState(t *sharddistributorv1.HeartbeatState) *types.HeartbeatState {
 	if t == nil {
 		return nil
 	}
 
-	var shards []*types.ShardLoad
-	if t.GetShards() != nil {
-		shards = make([]*types.ShardLoad, 0, len(t.GetShards()))
-		for _, shard := range t.GetShards() {
-			shards = append(shards, &types.ShardLoad{
-				ShardKey:     shard.GetShardKey(),
-				SmoothedLoad: shard.GetSmoothedLoad(),
-			})
+	var status types.ExecutorStatus
+	switch t.GetStatus() {
+	case sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_INVALID:
+		status = types.ExecutorStatusINVALID
+	case sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_ACTIVE:
+		status = types.ExecutorStatusACTIVE
+	case sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_DRAINING:
+		status = types.ExecutorStatusDRAINING
+	case sharddistributorv1.ExecutorStatus_EXECUTOR_STATUS_DRAINED:
+		status = types.ExecutorStatusDRAINED
+	default:
+		status = types.ExecutorStatusINVALID
+	}
+
+	var reportedShards map[string]*types.ShardStatusReport
+	if t.GetReportedShards() != nil {
+		reportedShards = make(map[string]*types.ShardStatusReport, len(t.GetReportedShards()))
+		for shardKey, report := range t.GetReportedShards() {
+			var shardStatus types.ShardStatus
+			switch report.GetStatus() {
+			case sharddistributorv1.ShardStatus_SHARD_STATUS_INVALID:
+				shardStatus = types.ShardStatusINVALID
+			case sharddistributorv1.ShardStatus_SHARD_STATUS_READY:
+				shardStatus = types.ShardStatusREADY
+			case sharddistributorv1.ShardStatus_SHARD_STATUS_DONE:
+				shardStatus = types.ShardStatusDONE
+			default:
+				shardStatus = types.ShardStatusINVALID
+			}
+			reportedShards[shardKey] = &types.ShardStatusReport{
+				Status:    shardStatus,
+				ShardLoad: report.GetShardLoad(),
+			}
 		}
 	}
 
-	return &types.ExecutorShardLoads{
-		ExecutorID: t.GetExecutorId(),
-		Shards:     shards,
+	return &types.HeartbeatState{
+		LastHeartbeat:  timestampToTimeVal(t.GetLastHeartbeat()),
+		Status:         status,
+		ReportedShards: reportedShards,
+		Metadata:       t.GetMetadata(),
+	}
+}
+
+func toShardDistributorShardStatistics(t *sharddistributorv1.ShardStatistics) *types.ShardStatistics {
+	if t == nil {
+		return nil
+	}
+	return &types.ShardStatistics{
+		SmoothedLoad:   t.GetSmoothedLoad(),
+		LastUpdateTime: timestampToTimeVal(t.GetLastUpdateTime()),
+		LastMoveTime:   timestampToTimeVal(t.GetLastMoveTime()),
+	}
+}
+
+func toShardDistributorAssignedState(t *sharddistributorv1.AssignedState) *types.AssignedState {
+	if t == nil {
+		return nil
+	}
+
+	var assignedShards map[string]*types.ShardAssignment
+	if t.GetAssignedShards() != nil {
+		assignedShards = make(map[string]*types.ShardAssignment, len(t.GetAssignedShards()))
+		for shardKey, assignment := range t.GetAssignedShards() {
+			var status types.AssignmentStatus
+			switch assignment.GetStatus() {
+			case sharddistributorv1.AssignmentStatus_ASSIGNMENT_STATUS_INVALID:
+				status = types.AssignmentStatusINVALID
+			case sharddistributorv1.AssignmentStatus_ASSIGNMENT_STATUS_READY:
+				status = types.AssignmentStatusREADY
+			default:
+				status = types.AssignmentStatusINVALID
+			}
+			assignedShards[shardKey] = &types.ShardAssignment{Status: status}
+		}
+	}
+
+	var handoverStats map[string]*types.ShardHandoverStats
+	if t.GetShardHandoverStats() != nil {
+		handoverStats = make(map[string]*types.ShardHandoverStats, len(t.GetShardHandoverStats()))
+		for shardKey, statistics := range t.GetShardHandoverStats() {
+			var handoverType types.HandoverType
+			switch statistics.GetHandoverType() {
+			case sharddistributorv1.HandoverType_HANDOVER_TYPE_INVALID:
+				handoverType = types.HandoverTypeINVALID
+			case sharddistributorv1.HandoverType_HANDOVER_TYPE_GRACEFUL:
+				handoverType = types.HandoverTypeGRACEFUL
+			case sharddistributorv1.HandoverType_HANDOVER_TYPE_EMERGENCY:
+				handoverType = types.HandoverTypeEMERGENCY
+			default:
+				handoverType = types.HandoverTypeINVALID
+			}
+			handoverStats[shardKey] = &types.ShardHandoverStats{
+				PreviousExecutorLastHeartbeatTime: timestampToTimeVal(statistics.GetPreviousExecutorLastHeartbeatTime()),
+				HandoverType:                      handoverType,
+			}
+		}
+	}
+
+	return &types.AssignedState{
+		AssignedShards:     assignedShards,
+		ShardHandoverStats: handoverStats,
+		LastUpdated:        timestampToTimeVal(t.GetLastUpdated()),
+		ModRevision:        t.GetModRevision(),
+	}
+}
+
+func toShardDistributorDrainedHost(t *sharddistributorv1.DrainedHost) *types.DrainedHost {
+	if t == nil {
+		return nil
+	}
+	return &types.DrainedHost{
+		Hostname:  t.GetHostname(),
+		DrainedAt: timestampToTimeVal(t.GetDrainedAt()),
+		DrainedBy: t.GetDrainedBy(),
+		Reason:    t.GetReason(),
 	}
 }
 

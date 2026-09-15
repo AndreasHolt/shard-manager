@@ -116,20 +116,20 @@ func (c *sharddistributorClient) GetExecutorState(ctx context.Context, gp1 *type
 	return gp2, err
 }
 
-func (c *sharddistributorClient) GetNamespaceLoads(ctx context.Context, gp1 *types.GetNamespaceLoadsRequest, p1 ...yarpc.CallOption) (gp2 *types.GetNamespaceLoadsResponse, err error) {
+func (c *sharddistributorClient) GetFullNamespaceState(ctx context.Context, gp1 *types.GetFullNamespaceStateRequest, p1 ...yarpc.CallOption) (gp2 *types.GetFullNamespaceStateResponse, err error) {
 	retryCount := getRetryCountFromContext(ctx)
 
 	var scope metrics.Scope
 	if retryCount == -1 {
-		scope = c.metricsClient.Scope(metrics.ShardDistributorClientGetNamespaceLoadsScope)
+		scope = c.metricsClient.Scope(metrics.ShardDistributorClientGetFullNamespaceStateScope)
 	} else {
-		scope = c.metricsClient.Scope(metrics.ShardDistributorClientGetNamespaceLoadsScope, metrics.IsRetryTag(retryCount > 0))
+		scope = c.metricsClient.Scope(metrics.ShardDistributorClientGetFullNamespaceStateScope, metrics.IsRetryTag(retryCount > 0))
 	}
 
 	scope.IncCounter(metrics.CadenceClientRequests)
 
 	sw := scope.StartTimer(metrics.CadenceClientLatency)
-	gp2, err = c.client.GetNamespaceLoads(ctx, gp1, p1...)
+	gp2, err = c.client.GetFullNamespaceState(ctx, gp1, p1...)
 	sw.Stop()
 
 	if err != nil {

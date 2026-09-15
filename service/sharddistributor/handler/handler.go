@@ -179,16 +179,12 @@ func (h *handlerImpl) GetNamespaceState(ctx context.Context, request *types.GetN
 
 	h.startWG.Wait()
 
-	namespaceIdx := slices.IndexFunc(h.shardDistributionCfg.Namespaces, func(namespace config.Namespace) bool {
-		return namespace.Name == request.GetNamespace()
-	})
-	if namespaceIdx == -1 {
-		return nil, &types.NamespaceNotFoundError{
-			Namespace: request.GetNamespace(),
-		}
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return nil, err
 	}
 
-	state, err := h.storage.GetState(ctx, request.GetNamespace())
+	state, err := h.storage.GetState(ctx, namespace)
 	if err != nil {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get namespace state: %v", err)}
 	}
@@ -221,50 +217,85 @@ func (h *handlerImpl) GetNamespaceState(ctx context.Context, request *types.GetN
 	}
 
 	return &types.GetNamespaceStateResponse{
-		Namespace: request.GetNamespace(),
+		Namespace: namespace,
 		Executors: executors,
 	}, nil
 }
 
-func (h *handlerImpl) GetNamespaceLoads(ctx context.Context, request *types.GetNamespaceLoadsRequest) (resp *types.GetNamespaceLoadsResponse, retError error) {
+func (h *handlerImpl) GetFullNamespaceState(ctx context.Context, request *types.GetFullNamespaceStateRequest) (resp *types.GetFullNamespaceStateResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
 
 	h.startWG.Wait()
 
-	namespaceIdx := slices.IndexFunc(h.shardDistributionCfg.Namespaces, func(namespace config.Namespace) bool {
-		return namespace.Name == request.GetNamespace()
-	})
-	if namespaceIdx == -1 {
-		return nil, &types.NamespaceNotFoundError{
-			Namespace: request.GetNamespace(),
-		}
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return nil, err
 	}
 
-	state, err := h.storage.GetState(ctx, request.GetNamespace())
+	state, err := h.storage.GetState(ctx, namespace)
 	if err != nil {
-		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get namespace loads: %v", err)}
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get full namespace state: %v", err)}
 	}
 
-	executors := make([]*types.ExecutorShardLoads, 0, len(state.ShardAssignments))
-
-	for executorID, assignedState := range state.ShardAssignments {
-		shards := make([]*types.ShardLoad, 0, len(assignedState.AssignedShards))
-
-		for shardKey := range assignedState.AssignedShards {
-			shards = append(shards, &types.ShardLoad{
-				ShardKey:     shardKey,
-				SmoothedLoad: state.ShardStats[shardKey].SmoothedLoad,
-			})
+	executors := make(map[string]*types.HeartbeatState, len(state.Executors))
+	for executorID, heartbeat := range state.Executors {
+		executors[executorID] = &types.HeartbeatState{
+			LastHeartbeat:  heartbeat.LastHeartbeat,
+			Status:         heartbeat.Status,
+			ReportedShards: heartbeat.ReportedShards,
+			Metadata:       heartbeat.Metadata,
 		}
-		executors = append(executors, &types.ExecutorShardLoads{
-			ExecutorID: executorID,
-			Shards:     shards,
-		})
 	}
 
-	return &types.GetNamespaceLoadsResponse{
-		Namespace: request.GetNamespace(),
-		Executors: executors,
+	shardStats := make(map[string]*types.ShardStatistics, len(state.ShardStats))
+	for shardKey, statistics := range state.ShardStats {
+		shardStats[shardKey] = &types.ShardStatistics{
+			SmoothedLoad:   statistics.SmoothedLoad,
+			LastUpdateTime: statistics.LastUpdateTime,
+			LastMoveTime:   statistics.LastMoveTime,
+		}
+	}
+
+	shardAssignments := make(map[string]*types.AssignedState, len(state.ShardAssignments))
+	for executorID, assignment := range state.ShardAssignments {
+		handoverStats := make(map[string]*types.ShardHandoverStats, len(assignment.ShardHandoverStats))
+		for shardKey, statistics := range assignment.ShardHandoverStats {
+			handoverStats[shardKey] = &types.ShardHandoverStats{
+				PreviousExecutorLastHeartbeatTime: statistics.PreviousExecutorLastHeartbeatTime,
+				HandoverType:                      statistics.HandoverType,
+			}
+		}
+		shardAssignments[executorID] = &types.AssignedState{
+			AssignedShards:     assignment.AssignedShards,
+			ShardHandoverStats: handoverStats,
+			LastUpdated:        assignment.LastUpdated,
+			ModRevision:        assignment.ModRevision,
+		}
+	}
+
+	drainedShards := make([]string, 0, len(state.DrainedShards))
+	for shardKey := range state.DrainedShards {
+		drainedShards = append(drainedShards, shardKey)
+	}
+	slices.Sort(drainedShards)
+
+	drainedHosts := make(map[string]*types.DrainedHost, len(state.DrainedHosts))
+	for hostname, host := range state.DrainedHosts {
+		drainedHosts[hostname] = &types.DrainedHost{
+			Hostname:  host.Hostname,
+			DrainedAt: host.DrainedAt,
+			DrainedBy: host.DrainedBy,
+			Reason:    host.Reason,
+		}
+	}
+
+	return &types.GetFullNamespaceStateResponse{
+		Namespace:        namespace,
+		Executors:        executors,
+		ShardStats:       shardStats,
+		ShardAssignments: shardAssignments,
+		DrainedShards:    drainedShards,
+		DrainedHosts:     drainedHosts,
 	}, nil
 }
 

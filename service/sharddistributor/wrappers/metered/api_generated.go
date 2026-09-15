@@ -104,17 +104,17 @@ func (h *metricsHandler) GetExecutorState(ctx context.Context, gp1 *types.GetExe
 	return gp2, err
 }
 
-func (h *metricsHandler) GetNamespaceLoads(ctx context.Context, gp1 *types.GetNamespaceLoadsRequest) (gp2 *types.GetNamespaceLoadsResponse, err error) {
+func (h *metricsHandler) GetFullNamespaceState(ctx context.Context, gp1 *types.GetFullNamespaceStateRequest) (gp2 *types.GetFullNamespaceStateResponse, err error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &err) }()
 
-	scope := h.metricsClient.Scope(metrics.ShardDistributorGetNamespaceLoadsScope)
+	scope := h.metricsClient.Scope(metrics.ShardDistributorGetFullNamespaceStateScope)
 	scope = scope.Tagged(metrics.NamespaceTag(gp1.GetNamespace()))
 	scope.IncCounter(metrics.ShardDistributorRequests)
 	sw := scope.StartTimer(metrics.ShardDistributorLatency)
 	defer sw.Stop()
 	logger := h.logger.WithTags(tag.ShardNamespace(gp1.GetNamespace()))
 
-	gp2, err = h.handler.GetNamespaceLoads(ctx, gp1)
+	gp2, err = h.handler.GetFullNamespaceState(ctx, gp1)
 
 	if err != nil {
 		handleErr(err, scope, logger)

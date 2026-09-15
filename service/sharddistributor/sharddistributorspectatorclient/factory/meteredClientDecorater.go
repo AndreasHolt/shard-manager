@@ -77,15 +77,15 @@ func (c *meteredShardDistributorClient) GetNamespaceState(ctx context.Context, r
 	return response, err
 }
 
-func (c *meteredShardDistributorClient) GetNamespaceLoads(ctx context.Context, request *types.GetNamespaceLoadsRequest, opts ...yarpc.CallOption) (*types.GetNamespaceLoadsResponse, error) {
+func (c *meteredShardDistributorClient) GetFullNamespaceState(ctx context.Context, request *types.GetFullNamespaceStateRequest, opts ...yarpc.CallOption) (*types.GetFullNamespaceStateResponse, error) {
 	scope := c.metricsScope.Tagged(map[string]string{
-		metrics.OperationTagName: metricsconstants.ShardDistributorSpectatorGetNamespaceLoadsOperationTagName,
+		metrics.OperationTagName: metricsconstants.ShardDistributorSpectatorGetFullNamespaceStateOperationTagName,
 	})
 
 	scope.Counter(metricsconstants.ShardDistributorSpectatorClientRequests).Inc(1)
 
 	sw := scope.Timer(metricsconstants.ShardDistributorSpectatorClientLatency).Start()
-	response, err := c.client.GetNamespaceLoads(ctx, request, opts...)
+	response, err := c.client.GetFullNamespaceState(ctx, request, opts...)
 	sw.Stop()
 
 	if err != nil {

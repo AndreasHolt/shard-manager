@@ -581,7 +581,7 @@ func TestGetNamespaceState_successMultipleExecutors(t *testing.T) {
 	require.Equal(t, types.AssignmentStatusINVALID, e2.AssignedShards[0].AssignmentStatus)
 }
 
-func TestGetNamespaceLoads(t *testing.T) {
+func TestGetFullNamespaceState(t *testing.T) {
 	cfg := config.ShardDistribution{
 		Namespaces: []config.Namespace{
 			{Name: _testNamespaceFixed, Type: config.NamespaceTypeFixed, ShardNum: 32},
@@ -590,22 +590,22 @@ func TestGetNamespaceLoads(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		request         *types.GetNamespaceLoadsRequest
+		request         *types.GetFullNamespaceStateRequest
 		setupMocks      func(*store.MockStore)
 		wantErrContains string
 	}{
 		{
 			name:            "unknown_namespace",
-			request:         &types.GetNamespaceLoadsRequest{Namespace: "missing"},
+			request:         &types.GetFullNamespaceStateRequest{Namespace: "missing"},
 			wantErrContains: `namespace "missing" not found`,
 		},
 		{
 			name:    "get_state_error",
-			request: &types.GetNamespaceLoadsRequest{Namespace: _testNamespaceFixed},
+			request: &types.GetFullNamespaceStateRequest{Namespace: _testNamespaceFixed},
 			setupMocks: func(m *store.MockStore) {
 				m.EXPECT().GetState(gomock.Any(), _testNamespaceFixed).Return(nil, errors.New("etcd is down"))
 			},
-			wantErrContains: "failed to get namespace loads",
+			wantErrContains: "failed to get full namespace state",
 		},
 	}
 
@@ -618,7 +618,7 @@ func TestGetNamespaceLoads(t *testing.T) {
 			}
 
 			h := newTestHandler(t, cfg, mockStorage)
-			resp, err := h.GetNamespaceLoads(context.Background(), tt.request)
+			resp, err := h.GetFullNamespaceState(context.Background(), tt.request)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tt.wantErrContains)
 			require.Nil(t, resp)
@@ -626,56 +626,116 @@ func TestGetNamespaceLoads(t *testing.T) {
 	}
 }
 
-func TestGetNamespaceLoads_successMultipleExecutors(t *testing.T) {
+func TestGetFullNamespaceState_success(t *testing.T) {
 	cfg := config.ShardDistribution{
 		Namespaces: []config.Namespace{
 			{Name: _testNamespaceFixed, Type: config.NamespaceTypeFixed, ShardNum: 32},
 		},
 	}
+	lastHeartbeat := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	lastUpdate := lastHeartbeat.Add(time.Minute)
+	lastMove := lastHeartbeat.Add(-time.Hour)
+	lastAssignmentUpdate := lastHeartbeat.Add(2 * time.Minute)
+	previousHeartbeat := lastHeartbeat.Add(-2 * time.Minute)
+	drainedAt := lastHeartbeat.Add(-3 * time.Minute)
+
 	ctrl := gomock.NewController(t)
 	mockStorage := store.NewMockStore(ctrl)
 	mockStorage.EXPECT().GetState(gomock.Any(), _testNamespaceFixed).Return(&store.NamespaceState{
-		ShardAssignments: map[string]store.AssignedState{
-			"executor1": {AssignedShards: map[string]*types.ShardAssignment{
-				"nonzero": {},
-				"idle":    {},
-			}},
-			"executor2": {AssignedShards: map[string]*types.ShardAssignment{
-				"new": {},
-			}},
+		Executors: map[string]store.HeartbeatState{
+			"executor1": {
+				LastHeartbeat: lastHeartbeat,
+				Status:        types.ExecutorStatusACTIVE,
+				ReportedShards: map[string]*types.ShardStatusReport{
+					"shard1": {Status: types.ShardStatusREADY, ShardLoad: 12.5},
+				},
+				Metadata: map[string]string{"zone": "dca1"},
+			},
 		},
 		ShardStats: map[string]store.ShardStatistics{
-			"nonzero":    {SmoothedLoad: 42.5},
-			"idle":       {SmoothedLoad: 0},
-			"unassigned": {SmoothedLoad: 100},
+			"shard1": {
+				SmoothedLoad:   10.5,
+				LastUpdateTime: lastUpdate,
+				LastMoveTime:   lastMove,
+			},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			"executor1": {
+				AssignedShards: map[string]*types.ShardAssignment{
+					"shard1": {Status: types.AssignmentStatusREADY},
+				},
+				ShardHandoverStats: map[string]store.ShardHandoverStats{
+					"shard1": {
+						PreviousExecutorLastHeartbeatTime: previousHeartbeat,
+						HandoverType:                      types.HandoverTypeGRACEFUL,
+					},
+				},
+				LastUpdated: lastAssignmentUpdate,
+				ModRevision: 7,
+			},
+		},
+		DrainedShards: map[string]struct{}{
+			"shard3": {},
+			"shard2": {},
+		},
+		DrainedHosts: map[string]store.DrainedHost{
+			"host1": {
+				Hostname:  "host1",
+				DrainedAt: drainedAt,
+				DrainedBy: "operator",
+				Reason:    "maintenance",
+			},
 		},
 	}, nil)
 
 	h := newTestHandler(t, cfg, mockStorage)
-	resp, err := h.GetNamespaceLoads(context.Background(), &types.GetNamespaceLoadsRequest{Namespace: _testNamespaceFixed})
+	actualResponse, err := h.GetFullNamespaceState(context.Background(), &types.GetFullNamespaceStateRequest{Namespace: _testNamespaceFixed})
 	require.NoError(t, err)
-	require.NotNil(t, resp)
-	require.Equal(t, _testNamespaceFixed, resp.GetNamespace())
-	require.Len(t, resp.GetExecutors(), 2)
-
-	actualLoads := make(map[string]map[string]float64, len(resp.GetExecutors()))
-	for _, executor := range resp.GetExecutors() {
-		actualLoads[executor.GetExecutorID()] = make(map[string]float64, len(executor.GetShards()))
-		for _, shard := range executor.GetShards() {
-			actualLoads[executor.GetExecutorID()][shard.GetShardKey()] = shard.GetSmoothedLoad()
-		}
-	}
-
-	expectedLoads := map[string]map[string]float64{
-		"executor1": {
-			"nonzero": 42.5,
-			"idle":    0,
+	expectedResponse := &types.GetFullNamespaceStateResponse{
+		Namespace: _testNamespaceFixed,
+		Executors: map[string]*types.HeartbeatState{
+			"executor1": {
+				LastHeartbeat: lastHeartbeat,
+				Status:        types.ExecutorStatusACTIVE,
+				ReportedShards: map[string]*types.ShardStatusReport{
+					"shard1": {Status: types.ShardStatusREADY, ShardLoad: 12.5},
+				},
+				Metadata: map[string]string{"zone": "dca1"},
+			},
 		},
-		"executor2": {
-			"new": 0,
+		ShardStats: map[string]*types.ShardStatistics{
+			"shard1": {
+				SmoothedLoad:   10.5,
+				LastUpdateTime: lastUpdate,
+				LastMoveTime:   lastMove,
+			},
+		},
+		ShardAssignments: map[string]*types.AssignedState{
+			"executor1": {
+				AssignedShards: map[string]*types.ShardAssignment{
+					"shard1": {Status: types.AssignmentStatusREADY},
+				},
+				ShardHandoverStats: map[string]*types.ShardHandoverStats{
+					"shard1": {
+						PreviousExecutorLastHeartbeatTime: previousHeartbeat,
+						HandoverType:                      types.HandoverTypeGRACEFUL,
+					},
+				},
+				LastUpdated: lastAssignmentUpdate,
+				ModRevision: 7,
+			},
+		},
+		DrainedShards: []string{"shard2", "shard3"},
+		DrainedHosts: map[string]*types.DrainedHost{
+			"host1": {
+				Hostname:  "host1",
+				DrainedAt: drainedAt,
+				DrainedBy: "operator",
+				Reason:    "maintenance",
+			},
 		},
 	}
-	require.Equal(t, expectedLoads, actualLoads)
+	require.Equal(t, expectedResponse, actualResponse)
 }
 
 func TestForceResetNamespace(t *testing.T) {

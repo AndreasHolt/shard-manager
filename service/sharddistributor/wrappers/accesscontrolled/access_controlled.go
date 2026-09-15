@@ -22,7 +22,7 @@
 
 // Package accesscontrolled wraps a handler.Handler with per-RPC permission checks
 // using authorization.Authorizer. Only RPCs that need a permission check are
-// overridden: the read APIs (GetNamespaceState, GetNamespaceLoads, GetExecutorState, InspectShard and
+// overridden: the read APIs (GetNamespaceState, GetFullNamespaceState, GetExecutorState, InspectShard and
 // GetDrainedShards) require PermissionRead, and the administrative APIs
 // (ListNamespaces, ForceResetNamespace, DrainShards and UndrainShards) require
 // PermissionAdmin. The remaining methods (Health, lifecycle Start/Stop, the
@@ -73,11 +73,11 @@ func (a *accessControlledHandler) GetNamespaceState(ctx context.Context, req *ty
 	return a.Handler.GetNamespaceState(ctx, req)
 }
 
-func (a *accessControlledHandler) GetNamespaceLoads(ctx context.Context, req *types.GetNamespaceLoadsRequest) (*types.GetNamespaceLoadsResponse, error) {
-	if err := a.authorize(ctx, "GetNamespaceLoads", req.GetNamespace(), authorization.PermissionRead); err != nil {
+func (a *accessControlledHandler) GetFullNamespaceState(ctx context.Context, req *types.GetFullNamespaceStateRequest) (*types.GetFullNamespaceStateResponse, error) {
+	if err := a.authorize(ctx, "GetFullNamespaceState", req.GetNamespace(), authorization.PermissionRead); err != nil {
 		return nil, err
 	}
-	return a.Handler.GetNamespaceLoads(ctx, req)
+	return a.Handler.GetFullNamespaceState(ctx, req)
 }
 
 func (a *accessControlledHandler) GetExecutorState(ctx context.Context, req *types.GetExecutorStateRequest) (*types.GetExecutorStateResponse, error) {
