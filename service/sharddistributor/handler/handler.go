@@ -273,11 +273,7 @@ func (h *handlerImpl) GetFullNamespaceState(ctx context.Context, request *types.
 		}
 	}
 
-	drainedShards := make([]string, 0, len(state.DrainedShards))
-	for shardKey := range state.DrainedShards {
-		drainedShards = append(drainedShards, shardKey)
-	}
-	slices.Sort(drainedShards)
+	drainedShards := slices.Sorted(maps.Keys(state.DrainedShards))
 
 	drainedHosts := make(map[string]*types.DrainedHost, len(state.DrainedHosts))
 	for hostname, host := range state.DrainedHosts {
