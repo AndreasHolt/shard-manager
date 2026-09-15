@@ -113,9 +113,23 @@ func TestAccessControlledHandler_GetFullNamespaceState(t *testing.T) {
 		expectInnerCalled bool
 		expectErr         error
 	}{
-		{name: "allow -> inner called", authorizeResult: authorization.Result{Decision: authorization.DecisionAllow}, expectInnerCalled: true},
-		{name: "deny -> AccessDeniedError", authorizeResult: authorization.Result{Decision: authorization.DecisionDeny}, expectErr: errUnauthorized},
-		{name: "authorizer error -> propagated", authorizeErr: errAuthorizerBoom, expectErr: errAuthorizerBoom},
+		{
+			name:              "allow -> inner called",
+			authorizeResult:   authorization.Result{Decision: authorization.DecisionAllow},
+			expectInnerCalled: true,
+		},
+		{
+			name:              "deny -> AccessDeniedError",
+			authorizeResult:   authorization.Result{Decision: authorization.DecisionDeny},
+			expectInnerCalled: false,
+			expectErr:         errUnauthorized,
+		},
+		{
+			name:              "authorizer error -> propagated",
+			authorizeErr:      errAuthorizerBoom,
+			expectInnerCalled: false,
+			expectErr:         errAuthorizerBoom,
+		},
 	}
 
 	for _, tc := range tests {
@@ -133,6 +147,7 @@ func TestAccessControlledHandler_GetFullNamespaceState(t *testing.T) {
 				}).
 				Return(tc.authorizeResult, tc.authorizeErr).
 				Times(1)
+
 			if tc.expectInnerCalled {
 				inner.EXPECT().
 					GetFullNamespaceState(gomock.Any(), request).
@@ -142,6 +157,7 @@ func TestAccessControlledHandler_GetFullNamespaceState(t *testing.T) {
 
 			wrapped := NewHandler(inner, authz)
 			resp, err := wrapped.GetFullNamespaceState(context.Background(), request)
+
 			if tc.expectErr != nil {
 				assert.Nil(t, resp)
 				assert.ErrorIs(t, err, tc.expectErr)
