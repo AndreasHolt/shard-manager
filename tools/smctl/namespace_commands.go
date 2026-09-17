@@ -115,7 +115,7 @@ func namespaceStateCommand(cf ClientFactory) *cliv3.Command {
 		Name:        "state",
 		Aliases:     []string{"st"},
 		Usage:       "Print the current state of a namespace",
-		Description: "Calls GetNamespaceState on shard-manager and prints the response as indented JSON. Use --full to include the complete namespace state.",
+		Description: "Calls GetNamespaceState on shard-manager and prints the response as indented JSON.",
 		Flags: []cliv3.Flag{
 			&cliv3.BoolFlag{
 				Name:  "full",
