@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/uber-go/tally"
@@ -44,6 +45,9 @@ func newTestShardDistributorConfig(mode string) *config.Config {
 	return &config.Config{
 		LoadBalancingMode: func(namespace string) string {
 			return mode
+		},
+		EphemeralAssignmentCoalescingWindow: func(string) time.Duration {
+			return 0
 		},
 	}
 }
