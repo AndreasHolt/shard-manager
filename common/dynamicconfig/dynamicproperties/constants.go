@@ -3223,7 +3223,7 @@ const (
 	// distributor collects initial-assignment requests before processing a batch.
 	// KeyName: shardDistributor.ephemeralAssignment.coalescingWindow
 	// Value type: Duration
-	// Default value: 10 milliseconds
+	// Default value: 100 milliseconds
 	// Allowed filters: namespace
 	ShardDistributorEphemeralAssignmentCoalescingWindow
 
@@ -5817,7 +5817,7 @@ var DurationKeys = map[DurationKey]DynamicDuration{
 		KeyName:      "shardDistributor.ephemeralAssignment.coalescingWindow",
 		Filters:      []Filter{Namespace},
 		Description:  "ShardDistributorEphemeralAssignmentCoalescingWindow is how long the shard distributor collects initial-assignment requests before processing a batch",
-		DefaultValue: 10 * time.Millisecond,
+		DefaultValue: 100 * time.Millisecond,
 	},
 }
 
