@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"math/rand"
@@ -189,7 +190,11 @@ func (p *namespaceProcessor) runRebalancingLoop(ctx context.Context) {
 	// Perform an initial rebalance on startup.
 	err := p.rebalanceShards(ctx)
 	if err != nil {
-		p.logger.Error("initial rebalance failed", tag.Error(err))
+		if errors.Is(err, store.ErrVersionConflict) {
+			p.logger.Info("initial rebalance version conflict", tag.Error(err))
+		} else {
+			p.logger.Error("initial rebalance failed", tag.Error(err))
+		}
 	}
 
 	if err := p.runRebalanceTriggeringLoop(ctx, triggerChan); err != nil {
@@ -214,7 +219,11 @@ func (p *namespaceProcessor) runRebalancingLoop(ctx context.Context) {
 
 			p.logger.Info("Rebalancing triggered", tag.Dynamic("triggerReason", triggerReason))
 			if err := p.rebalanceShards(ctx); err != nil {
-				p.logger.Error("rebalance failed", tag.Error(err))
+				if errors.Is(err, store.ErrVersionConflict) {
+					p.logger.Info("rebalance version conflict", tag.Error(err))
+				} else {
+					p.logger.Error("rebalance failed", tag.Error(err))
+				}
 
 				// If rebalance fails, we want to trigger another rebalance ASAP,
 				// but with a cooldown to avoid rebalance storms if the underlying issue is persistent.
