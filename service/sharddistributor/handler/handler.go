@@ -39,6 +39,7 @@ import (
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/cache"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/ephemeralassigner"
+	"github.com/cadence-workflow/shard-manager/service/sharddistributor/hostname"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
@@ -217,6 +218,7 @@ func (h *handlerImpl) GetNamespaceState(ctx context.Context, request *types.GetN
 			LastHeartbeat:  heartbeat.LastHeartbeat,
 			Metadata:       heartbeat.Metadata,
 			AssignedShards: assignedShards,
+			HostMetadata:   heartbeat.HostMetadata,
 		})
 	}
 
@@ -350,6 +352,7 @@ func (h *handlerImpl) GetExecutorState(ctx context.Context, request *types.GetEx
 			LastHeartbeat:  heartbeatState.LastHeartbeat,
 			Metadata:       heartbeatState.Metadata,
 			AssignedShards: assignedShards,
+			HostMetadata:   heartbeatState.HostMetadata,
 		},
 	}, nil
 }
@@ -551,6 +554,108 @@ func (h *handlerImpl) GetDrainedShards(ctx context.Context, request *types.GetDr
 	}, nil
 }
 
+// DrainHosts marks the requested hosts as drained for the namespace.
+// Executors on a drained host are ineligible for assignment until undrained.
+// The call is idempotent, so hosts that are already drained keep their original metadata.
+func (h *handlerImpl) DrainHosts(ctx context.Context, request *types.DrainHostsRequest) (retError error) {
+	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+
+	h.startWG.Wait()
+
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return err
+	}
+	hosts := make([]store.DrainedHost, 0, len(request.GetHosts()))
+	hostnames := make([]string, 0, len(request.GetHosts()))
+	for _, host := range request.GetHosts() {
+		hosts = append(hosts, store.DrainedHost{
+			Hostname:  host.GetHostname(),
+			DrainedAt: host.GetDrainedAt(),
+			DrainedBy: host.GetDrainedBy(),
+			Reason:    host.GetReason(),
+		})
+		hostnames = append(hostnames, host.GetHostname())
+	}
+	if err := validateHostnames(hostnames); err != nil {
+		return err
+	}
+
+	err := h.storage.DrainHosts(ctx, namespace, hosts)
+	if err != nil {
+		return &types.InternalServiceError{Message: fmt.Sprintf("failed to drain hosts: %v", err)}
+	}
+
+	h.logger.Info("Drained hosts",
+		tag.ShardNamespace(namespace),
+		tag.Dynamic("requested_hosts_to_drain", hostnames),
+	)
+
+	return nil
+}
+
+// UndrainHosts removes the requested hosts from the namespace's drained set.
+// The call is idempotent, and the response returns only the hosts this call removed.
+func (h *handlerImpl) UndrainHosts(ctx context.Context, request *types.UndrainHostsRequest) (resp *types.UndrainHostsResponse, retError error) {
+	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+
+	h.startWG.Wait()
+
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return nil, err
+	}
+	hostnames := request.GetHostnames()
+	if err := validateHostnames(hostnames); err != nil {
+		return nil, err
+	}
+
+	undrained, err := h.storage.UndrainHosts(ctx, namespace, hostnames)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to undrain hosts: %v", err)}
+	}
+
+	h.logger.Info("Undrained hosts",
+		tag.ShardNamespace(namespace),
+		tag.Dynamic("requested_hosts_to_undrain", hostnames),
+		tag.Dynamic("undrained_hosts", undrained),
+	)
+
+	return &types.UndrainHostsResponse{UndrainedHostnames: undrained}, nil
+}
+
+// GetDrainedHosts returns the hosts currently drained for the namespace.
+func (h *handlerImpl) GetDrainedHosts(ctx context.Context, request *types.GetDrainedHostsRequest) (resp *types.GetDrainedHostsResponse, retError error) {
+	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+
+	h.startWG.Wait()
+
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
+	hosts, err := h.storage.GetDrainedHosts(ctx, namespace)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get drained hosts: %v", err)}
+	}
+
+	var drainedHosts []*types.DrainedHost
+	for _, host := range hosts {
+		drainedHosts = append(drainedHosts, &types.DrainedHost{
+			Hostname:  host.Hostname,
+			DrainedAt: host.DrainedAt,
+			DrainedBy: host.DrainedBy,
+			Reason:    host.Reason,
+		})
+	}
+
+	return &types.GetDrainedHostsResponse{
+		Namespace: namespace,
+		Hosts:     drainedHosts,
+	}, nil
+}
+
 // validateNamespace rejects namespaces that are absent from the static service config
 func (h *handlerImpl) validateNamespace(namespace string) error {
 	found := slices.ContainsFunc(h.shardDistributionCfg.Namespaces, func(n config.Namespace) bool {
@@ -572,6 +677,19 @@ func validateShardKeys(shardKeys []string) error {
 			return &types.BadRequestError{
 				Message: fmt.Sprintf("invalid shard key %q: must be non-empty and must not contain '/'", shardKey),
 			}
+		}
+	}
+	return nil
+}
+
+// validateHostnames rejects drain and undrain requests that storage cannot represent.
+func validateHostnames(hostnames []string) error {
+	if len(hostnames) == 0 {
+		return &types.BadRequestError{Message: "hostnames must not be empty"}
+	}
+	for _, name := range hostnames {
+		if err := hostname.Validate(name); err != nil {
+			return &types.BadRequestError{Message: err.Error()}
 		}
 	}
 	return nil

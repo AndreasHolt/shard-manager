@@ -523,6 +523,7 @@ func fromShardDistributorNamespaceExecutorState(ex *types.NamespaceExecutorState
 		LastHeartbeat:  timeToTimestamp(&lastHB),
 		Metadata:       ex.GetMetadata(),
 		AssignedShards: assigned,
+		HostMetadata:   fromShardDistributorHostMetadata(ex.GetHostMetadata()),
 	}
 }
 
@@ -573,6 +574,7 @@ func toShardDistributorNamespaceExecutorState(ex *sharddistributorv1.NamespaceEx
 		LastHeartbeat:  lastHB,
 		Metadata:       ex.GetMetadata(),
 		AssignedShards: assigned,
+		HostMetadata:   toShardDistributorHostMetadata(ex.GetHostMetadata()),
 	}
 }
 
@@ -711,19 +713,6 @@ func fromShardDistributorAssignedState(t *types.AssignedState) *sharddistributor
 	}
 }
 
-func fromShardDistributorDrainedHost(t *types.DrainedHost) *sharddistributorv1.DrainedHost {
-	if t == nil {
-		return nil
-	}
-	drainedAt := t.GetDrainedAt()
-	return &sharddistributorv1.DrainedHost{
-		Hostname:  t.GetHostname(),
-		DrainedAt: timeToTimestamp(&drainedAt),
-		DrainedBy: t.GetDrainedBy(),
-		Reason:    t.GetReason(),
-	}
-}
-
 // ToShardDistributorGetFullNamespaceStateResponse converts a sharddistributor GetFullNamespaceStateResponse to a types.GetFullNamespaceStateResponse.
 func ToShardDistributorGetFullNamespaceStateResponse(t *sharddistributorv1.GetFullNamespaceStateResponse) *types.GetFullNamespaceStateResponse {
 	if t == nil {
@@ -831,18 +820,6 @@ func toShardDistributorAssignedState(t *sharddistributorv1.AssignedState) *types
 		ShardHandoverStats: handoverStats,
 		LastUpdated:        timestampToTimeVal(t.GetLastUpdated()),
 		ModRevision:        t.GetModRevision(),
-	}
-}
-
-func toShardDistributorDrainedHost(t *sharddistributorv1.DrainedHost) *types.DrainedHost {
-	if t == nil {
-		return nil
-	}
-	return &types.DrainedHost{
-		Hostname:  t.GetHostname(),
-		DrainedAt: timestampToTimeVal(t.GetDrainedAt()),
-		DrainedBy: t.GetDrainedBy(),
-		Reason:    t.GetReason(),
 	}
 }
 
@@ -1067,6 +1044,159 @@ func ToShardDistributorGetDrainedShardsResponse(t *sharddistributorv1.GetDrained
 	return &types.GetDrainedShardsResponse{
 		Namespace: t.GetNamespace(),
 		ShardKeys: t.GetShardKeys(),
+	}
+}
+
+func fromShardDistributorDrainedHost(t *types.DrainedHost) *sharddistributorv1.DrainedHost {
+	if t == nil {
+		return nil
+	}
+	drainedAt := t.GetDrainedAt()
+	return &sharddistributorv1.DrainedHost{
+		Hostname:  t.GetHostname(),
+		DrainedAt: timeToTimestamp(&drainedAt),
+		DrainedBy: t.GetDrainedBy(),
+		Reason:    t.GetReason(),
+	}
+}
+
+func toShardDistributorDrainedHost(t *sharddistributorv1.DrainedHost) *types.DrainedHost {
+	if t == nil {
+		return nil
+	}
+	return &types.DrainedHost{
+		Hostname:  t.GetHostname(),
+		DrainedAt: timestampToTimeVal(t.GetDrainedAt()),
+		DrainedBy: t.GetDrainedBy(),
+		Reason:    t.GetReason(),
+	}
+}
+
+func fromShardDistributorDrainedHosts(hosts []*types.DrainedHost) []*sharddistributorv1.DrainedHost {
+	if hosts == nil {
+		return nil
+	}
+	out := make([]*sharddistributorv1.DrainedHost, 0, len(hosts))
+	for _, host := range hosts {
+		out = append(out, fromShardDistributorDrainedHost(host))
+	}
+	return out
+}
+
+func toShardDistributorDrainedHosts(hosts []*sharddistributorv1.DrainedHost) []*types.DrainedHost {
+	if hosts == nil {
+		return nil
+	}
+	out := make([]*types.DrainedHost, 0, len(hosts))
+	for _, host := range hosts {
+		out = append(out, toShardDistributorDrainedHost(host))
+	}
+	return out
+}
+
+// FromShardDistributorDrainHostsRequest converts a types.DrainHostsRequest to its proto counterpart.
+func FromShardDistributorDrainHostsRequest(t *types.DrainHostsRequest) *sharddistributorv1.DrainHostsRequest {
+	if t == nil {
+		return nil
+	}
+	return &sharddistributorv1.DrainHostsRequest{
+		Namespace: t.GetNamespace(),
+		Hosts:     fromShardDistributorDrainedHosts(t.GetHosts()),
+	}
+}
+
+// ToShardDistributorDrainHostsRequest converts a proto DrainHostsRequest to its types counterpart.
+func ToShardDistributorDrainHostsRequest(t *sharddistributorv1.DrainHostsRequest) *types.DrainHostsRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.DrainHostsRequest{
+		Namespace: t.GetNamespace(),
+		Hosts:     toShardDistributorDrainedHosts(t.GetHosts()),
+	}
+}
+
+// FromShardDistributorUndrainHostsRequest converts a types.UndrainHostsRequest to its proto counterpart.
+func FromShardDistributorUndrainHostsRequest(t *types.UndrainHostsRequest) *sharddistributorv1.UndrainHostsRequest {
+	if t == nil {
+		return nil
+	}
+	return &sharddistributorv1.UndrainHostsRequest{
+		Namespace: t.GetNamespace(),
+		Hostnames: t.GetHostnames(),
+	}
+}
+
+// ToShardDistributorUndrainHostsRequest converts a proto UndrainHostsRequest to its types counterpart.
+func ToShardDistributorUndrainHostsRequest(t *sharddistributorv1.UndrainHostsRequest) *types.UndrainHostsRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.UndrainHostsRequest{
+		Namespace: t.GetNamespace(),
+		Hostnames: t.GetHostnames(),
+	}
+}
+
+// FromShardDistributorUndrainHostsResponse converts a types.UndrainHostsResponse to its proto counterpart.
+func FromShardDistributorUndrainHostsResponse(t *types.UndrainHostsResponse) *sharddistributorv1.UndrainHostsResponse {
+	if t == nil {
+		return nil
+	}
+	return &sharddistributorv1.UndrainHostsResponse{
+		UndrainedHostnames: t.GetUndrainedHostnames(),
+	}
+}
+
+// ToShardDistributorUndrainHostsResponse converts a proto UndrainHostsResponse to its types counterpart.
+func ToShardDistributorUndrainHostsResponse(t *sharddistributorv1.UndrainHostsResponse) *types.UndrainHostsResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.UndrainHostsResponse{
+		UndrainedHostnames: t.GetUndrainedHostnames(),
+	}
+}
+
+// FromShardDistributorGetDrainedHostsRequest converts a types.GetDrainedHostsRequest to its proto counterpart.
+func FromShardDistributorGetDrainedHostsRequest(t *types.GetDrainedHostsRequest) *sharddistributorv1.GetDrainedHostsRequest {
+	if t == nil {
+		return nil
+	}
+	return &sharddistributorv1.GetDrainedHostsRequest{
+		Namespace: t.GetNamespace(),
+	}
+}
+
+// ToShardDistributorGetDrainedHostsRequest converts a proto GetDrainedHostsRequest to its types counterpart.
+func ToShardDistributorGetDrainedHostsRequest(t *sharddistributorv1.GetDrainedHostsRequest) *types.GetDrainedHostsRequest {
+	if t == nil {
+		return nil
+	}
+	return &types.GetDrainedHostsRequest{
+		Namespace: t.GetNamespace(),
+	}
+}
+
+// FromShardDistributorGetDrainedHostsResponse converts a types.GetDrainedHostsResponse to its proto counterpart.
+func FromShardDistributorGetDrainedHostsResponse(t *types.GetDrainedHostsResponse) *sharddistributorv1.GetDrainedHostsResponse {
+	if t == nil {
+		return nil
+	}
+	return &sharddistributorv1.GetDrainedHostsResponse{
+		Namespace: t.GetNamespace(),
+		Hosts:     fromShardDistributorDrainedHosts(t.GetHosts()),
+	}
+}
+
+// ToShardDistributorGetDrainedHostsResponse converts a proto GetDrainedHostsResponse to its types counterpart.
+func ToShardDistributorGetDrainedHostsResponse(t *sharddistributorv1.GetDrainedHostsResponse) *types.GetDrainedHostsResponse {
+	if t == nil {
+		return nil
+	}
+	return &types.GetDrainedHostsResponse{
+		Namespace: t.GetNamespace(),
+		Hosts:     toShardDistributorDrainedHosts(t.GetHosts()),
 	}
 }
 
