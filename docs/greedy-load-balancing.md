@@ -9,8 +9,9 @@ moving shards. It supports fixed and ephemeral namespaces.
 Greedy smooths reported load,  and can choose shards based on which moves improves balance the most, and limits
 load-based movement with thresholds, cooldowns, and a move budget.
 
-The goal of greedy is to be insensitive to short-lived spikes, which also means it doesn't react
-to workload changes instantly. This load balancing mode also persists additional shard statistics to help facilitate cooldowns on moves and smoothed load.
+Smoothing and movement limits help avoid unnecessary shard moves during short-lived
+spikes, but may delay rebalancing when workloads change. Greedy also relies on meaningful
+per-shard load reports and stores additional shard statistics.
 
 ## Enable it
 
