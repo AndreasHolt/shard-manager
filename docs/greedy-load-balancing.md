@@ -32,11 +32,6 @@ shardDistributor.loadBalancingMode:
 ```
 
 Replace `my-namespace` with your Shard Manager namespace name.
-The file-based client reloads changes
-without a server restart; the development polling interval is `10s`.
-
-Start with the defaults below on one namespace. Check load imbalance, shard move
-rates, and application latency before enabling it more widely.
 
 ## How it works
 
