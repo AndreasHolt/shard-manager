@@ -16,9 +16,9 @@ to workload changes instantly. This load balancing mode also persists additional
 
 Your application's `ShardProcessor.GetShardReport()` must return a meaningful
 `ShardReport.ShardLoad`. The executor client sends this value in heartbeats.
-Choose a non-negative, finite signal that adds up across shards, such as requests
-per second when requests have similar costs. Use consistent units across the
-namespace and report zero for idle shards. Shards with very low smoothed loads, default below `0.01`,
+Your application defines what load represents for its use case. Report non-negative,
+finite values that are comparable across shards and executors within the namespace.
+Report zero for idle shards. Shards with very low smoothed loads, default below `0.01`,
 are not candidates for greedy load-based moves, so choose units accordingly.
 
 Add the following to your server's dynamic configuration file:
