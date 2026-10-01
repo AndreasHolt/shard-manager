@@ -6,8 +6,8 @@ Greedy mode balances the total reported shard load across executors. Use it when
 shards have different workloads and sustained imbalance is worth the cost of
 moving shards. It supports fixed and ephemeral namespaces.
 
-Greedy smooths reported load,  and can choose shards based on which moves improves balance the most, and limits
-load-based movement with thresholds, cooldowns, and a move budget.
+Greedy smooths reported load and chooses shards whose moves would improve balance
+the most. It limits load-based movement with thresholds, cooldowns, and a move budget.
 
 Smoothing and movement limits help avoid unnecessary shard moves during short-lived
 spikes, but may delay rebalancing when workloads change. Greedy also relies on meaningful
