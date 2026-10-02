@@ -2659,7 +2659,7 @@ const (
 	//
 	// KeyName: shardDistributor.loadBalancingMode
 	// Value type: String
-	// Default value: "naive"
+	// Default value: "greedy"
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingMode
 
@@ -5301,7 +5301,7 @@ var StringKeys = map[StringKey]DynamicString{
 	ShardDistributorLoadBalancingMode: {
 		KeyName:      "shardDistributor.loadBalancingMode",
 		Description:  "ShardDistributorLoadBalancingMode is the load balancing mode for the shard distributor. Depending on the mode, the shard distributor will use different ways to distribute the shards",
-		DefaultValue: "naive",
+		DefaultValue: "greedy",
 	},
 }
 
