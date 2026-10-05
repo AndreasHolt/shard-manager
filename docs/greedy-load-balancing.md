@@ -1,43 +1,24 @@
 # Greedy load balancing mode
 
-## When to use this load balancing mode
+Greedy is Shard Manager's default load balancing mode. It balances executor load
+using smoothed shard reports and limits shard movement with thresholds, cooldowns,
+and a move budget. This reduces reactions to short-lived spikes but can delay
+rebalancing after workload changes. It relies on meaningful load reports and
+persists shard statistics.
 
-Greedy mode balances the total reported shard load across executors. Use it when
-shards have different workloads and sustained imbalance is worth the cost of
-moving shards. It supports fixed and ephemeral namespaces.
-
-Greedy smooths reported load and chooses shards whose moves would improve balance
-the most. It limits load-based movement with thresholds, cooldowns, and a move budget.
-
-Smoothing and movement limits help avoid unnecessary shard moves during short-lived
-spikes, but may delay rebalancing when workloads change. Greedy also relies on meaningful
-per-shard load reports and stores additional shard statistics.
-
-## Enable it
+## Report shard load
 
 Your application's `ShardProcessor.GetShardReport()` must return a meaningful
 `ShardReport.ShardLoad`. The executor client sends this value in heartbeats.
 Your application defines what load represents for its use case. Report non-negative,
 finite values that are comparable across shards and executors within the namespace.
-Report zero for idle shards. Shards with very low smoothed loads, default below `0.01`,
-are not candidates for greedy load-based moves, so choose units accordingly.
-
-Add the following to your server's dynamic configuration file:
-
-```yaml
-shardDistributor.loadBalancingMode:
-  - value: "greedy"
-    constraints:
-      namespace: "my-namespace"
-```
-
-Replace `my-namespace` with your Shard Manager namespace name.
 
 ## How it works
 
 Greedy smooths each shard's load reports and sums those loads per
 executor. Each rebalance pass selects the least-loaded eligible destination and examines
 sources from highest to lowest load. Only moves that improve balance are considered.
+Greedy skips load-based moves for shards with smoothed load below `0.01`.
 For the first source with an eligible shard, it chooses the shard whose move would
 improve the load balance between the two executors the most. It updates the planned
 loads and repeats until the move budget runs out or no beneficial move remains.
