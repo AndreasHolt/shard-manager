@@ -147,6 +147,13 @@ func (h *executor) emitShardAssignmentMetrics(namespace string, heartbeatTime ti
 		return
 	}
 
+	// handovers are only observed on the first heartbeat after an assignment change,
+	// i.e. when the previous heartbeat happened before the assignment was written
+	firstHeartbeatSinceAssignment := previousHeartbeat == nil || previousHeartbeat.LastHeartbeat.Before(assignedState.LastUpdated)
+	if !firstHeartbeatSinceAssignment {
+		return
+	}
+
 	metricsScope := h.metricsClient.Scope(metrics.ShardDistributorHeartbeatScope).
 		Tagged(metrics.NamespaceTag(namespace))
 

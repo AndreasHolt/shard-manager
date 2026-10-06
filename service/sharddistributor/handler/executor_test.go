@@ -700,6 +700,44 @@ func TestEmitShardAssignmentMetrics(t *testing.T) {
 				{Latency: 30 * time.Second, HandoverType: types.HandoverTypeEMERGENCY},
 			},
 		},
+		{
+			name: "assignment updated after previous heartbeat",
+			previousHeartbeat: &store.HeartbeatState{
+				LastHeartbeat:  heartbeatTime.Add(-30 * time.Second),
+				ReportedShards: map[string]*types.ShardStatusReport{},
+			},
+			assignedState: &store.AssignedState{
+				AssignedShards: makeReadyAssignedShards(shardID),
+				LastUpdated:    heartbeatTime.Add(-10 * time.Second),
+				ShardHandoverStats: map[string]store.ShardHandoverStats{
+					shardID: {
+						PreviousExecutorLastHeartbeatTime: heartbeatTime.Add(-20 * time.Second),
+						HandoverType:                      types.HandoverTypeEMERGENCY,
+					},
+				},
+			},
+			expectedDistributionLatency: common.Ptr(10 * time.Second),
+			expectedHandoverLatencies:   []*expectHandoverMetric{{Latency: 20 * time.Second, HandoverType: types.HandoverTypeEMERGENCY}},
+		},
+		{
+			name: "assignment unchanged since previous heartbeat",
+			previousHeartbeat: &store.HeartbeatState{
+				LastHeartbeat:  heartbeatTime.Add(-10 * time.Millisecond),
+				ReportedShards: map[string]*types.ShardStatusReport{},
+			},
+			assignedState: &store.AssignedState{
+				AssignedShards: makeReadyAssignedShards(shardID),
+				LastUpdated:    heartbeatTime.Add(-6 * time.Hour),
+				ShardHandoverStats: map[string]store.ShardHandoverStats{
+					shardID: {
+						PreviousExecutorLastHeartbeatTime: heartbeatTime.Add(-6 * time.Hour),
+						HandoverType:                      types.HandoverTypeEMERGENCY,
+					},
+				},
+			},
+			expectedDistributionLatency: nil,
+			expectedHandoverLatencies:   nil,
+		},
 	}
 
 	for _, tc := range testCases {
