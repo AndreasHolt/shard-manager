@@ -13,6 +13,9 @@ const (
 	ShardDistributorSpectatorDrainShardsOperationTagName           = "ShardDistributorSpectatorDrainShards"
 	ShardDistributorSpectatorUndrainShardsOperationTagName         = "ShardDistributorSpectatorUndrainShards"
 	ShardDistributorSpectatorGetDrainedShardsOperationTagName      = "ShardDistributorSpectatorGetDrainedShards"
+	ShardDistributorSpectatorDrainHostsOperationTagName            = "ShardDistributorSpectatorDrainHosts"
+	ShardDistributorSpectatorUndrainHostsOperationTagName          = "ShardDistributorSpectatorUndrainHosts"
+	ShardDistributorSpectatorGetDrainedHostsOperationTagName       = "ShardDistributorSpectatorGetDrainedHosts"
 	ShardDistributorSpectatorForceResetNamespaceOperationTagName   = "ShardDistributorSpectatorForceResetNamespace"
 
 	// Counter metrics

@@ -39,6 +39,7 @@ import (
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/cache"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/ephemeralassigner"
+	"github.com/cadence-workflow/shard-manager/service/sharddistributor/hostname"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
@@ -194,30 +195,9 @@ func (h *handlerImpl) GetNamespaceState(ctx context.Context, request *types.GetN
 	}
 
 	executors := make([]*types.NamespaceExecutorState, 0, len(state.Executors))
-
 	for executorID, heartbeat := range state.Executors {
 		assignedState := state.ShardAssignments[executorID]
-
-		assignedShards := make([]*types.ExecutorAssignedShardState, 0, len(assignedState.AssignedShards))
-		for shardKey, shardAssignment := range assignedState.AssignedShards {
-			status := types.AssignmentStatusINVALID
-			if shardAssignment != nil {
-				status = shardAssignment.Status
-			}
-			assignedShards = append(assignedShards, &types.ExecutorAssignedShardState{
-				ShardKey:                 shardKey,
-				AssignmentStatus:         status,
-				AssignedStateModRevision: assignedState.ModRevision,
-			})
-		}
-
-		executors = append(executors, &types.NamespaceExecutorState{
-			ExecutorID:     executorID,
-			Status:         heartbeat.Status,
-			LastHeartbeat:  heartbeat.LastHeartbeat,
-			Metadata:       heartbeat.Metadata,
-			AssignedShards: assignedShards,
-		})
+		executors = append(executors, toTypesNamespaceExecutorState(executorID, heartbeat, &assignedState))
 	}
 
 	return &types.GetNamespaceStateResponse{
@@ -241,61 +221,13 @@ func (h *handlerImpl) GetFullNamespaceState(ctx context.Context, request *types.
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get full namespace state: %v", err)}
 	}
 
-	executors := make(map[string]*types.HeartbeatState, len(state.Executors))
-	for executorID, heartbeat := range state.Executors {
-		executors[executorID] = &types.HeartbeatState{
-			LastHeartbeat:  heartbeat.LastHeartbeat,
-			Status:         heartbeat.Status,
-			ReportedShards: heartbeat.ReportedShards,
-			Metadata:       heartbeat.Metadata,
-		}
-	}
-
-	shardStats := make(map[string]*types.ShardStatistics, len(state.ShardStats))
-	for shardKey, statistics := range state.ShardStats {
-		shardStats[shardKey] = &types.ShardStatistics{
-			SmoothedLoad:   statistics.SmoothedLoad,
-			LastUpdateTime: statistics.LastUpdateTime,
-			LastMoveTime:   statistics.LastMoveTime,
-		}
-	}
-
-	shardAssignments := make(map[string]*types.AssignedState, len(state.ShardAssignments))
-	for executorID, assignment := range state.ShardAssignments {
-		handoverStats := make(map[string]*types.ShardHandoverStats, len(assignment.ShardHandoverStats))
-		for shardKey, statistics := range assignment.ShardHandoverStats {
-			handoverStats[shardKey] = &types.ShardHandoverStats{
-				PreviousExecutorLastHeartbeatTime: statistics.PreviousExecutorLastHeartbeatTime,
-				HandoverType:                      statistics.HandoverType,
-			}
-		}
-		shardAssignments[executorID] = &types.AssignedState{
-			AssignedShards:     assignment.AssignedShards,
-			ShardHandoverStats: handoverStats,
-			LastUpdated:        assignment.LastUpdated,
-			ModRevision:        assignment.ModRevision,
-		}
-	}
-
-	drainedShards := slices.Sorted(maps.Keys(state.DrainedShards))
-
-	drainedHosts := make(map[string]*types.DrainedHost, len(state.DrainedHosts))
-	for hostname, host := range state.DrainedHosts {
-		drainedHosts[hostname] = &types.DrainedHost{
-			Hostname:  host.Hostname,
-			DrainedAt: host.DrainedAt,
-			DrainedBy: host.DrainedBy,
-			Reason:    host.Reason,
-		}
-	}
-
 	return &types.GetFullNamespaceStateResponse{
 		Namespace:        namespace,
-		Executors:        executors,
-		ShardStats:       shardStats,
-		ShardAssignments: shardAssignments,
-		DrainedShards:    drainedShards,
-		DrainedHosts:     drainedHosts,
+		Executors:        toTypesHeartbeatStates(state.Executors),
+		ShardStats:       toTypesShardStatistics(state.ShardStats),
+		ShardAssignments: toTypesAssignedStates(state.ShardAssignments),
+		DrainedShards:    slices.Sorted(maps.Keys(state.DrainedShards)),
+		DrainedHosts:     toTypesDrainedHostsByName(state.DrainedHosts),
 	}, nil
 }
 
@@ -323,34 +255,9 @@ func (h *handlerImpl) GetExecutorState(ctx context.Context, request *types.GetEx
 	if err != nil {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get executor state: %v", err)}
 	}
-	heartbeatState := executorState.Heartbeat
-	assignedState := executorState.Assignment
-
-	assignedShards := make([]*types.ExecutorAssignedShardState, 0)
-	if assignedState != nil {
-		assignedShards = make([]*types.ExecutorAssignedShardState, 0, len(assignedState.AssignedShards))
-		for shardKey, shardAssignment := range assignedState.AssignedShards {
-			status := types.AssignmentStatusINVALID
-			if shardAssignment != nil {
-				status = shardAssignment.Status
-			}
-			assignedShards = append(assignedShards, &types.ExecutorAssignedShardState{
-				ShardKey:                 shardKey,
-				AssignmentStatus:         status,
-				AssignedStateModRevision: assignedState.ModRevision,
-			})
-		}
-	}
-
 	return &types.GetExecutorStateResponse{
 		Namespace: request.GetNamespace(),
-		Executor: &types.NamespaceExecutorState{
-			ExecutorID:     request.GetExecutorID(),
-			Status:         heartbeatState.Status,
-			LastHeartbeat:  heartbeatState.LastHeartbeat,
-			Metadata:       heartbeatState.Metadata,
-			AssignedShards: assignedShards,
-		},
+		Executor:  toTypesNamespaceExecutorState(request.GetExecutorID(), *executorState.Heartbeat, executorState.Assignment),
 	}, nil
 }
 
@@ -405,15 +312,8 @@ func (h *handlerImpl) sendWatchResponse(namespace string, server WatchNamespaceS
 		return &types.InternalServiceError{Message: fmt.Sprintf("failed to get shard assignments: %v", e)}
 	}
 	response := &types.WatchNamespaceStateResponse{
-		Executors:        make([]*types.ExecutorShardAssignment, 0, len(state.ExecutorToShards)),
+		Executors:        toTypesExecutorShardAssignments(state.ExecutorToShards),
 		DrainedShardKeys: slices.Sorted(maps.Keys(state.DrainedShards)),
-	}
-	for ex, shardIDs := range state.ExecutorToShards {
-		response.Executors = append(response.Executors, &types.ExecutorShardAssignment{
-			ExecutorID:     ex.ExecutorID,
-			AssignedShards: WrapShards(shardIDs),
-			Metadata:       ex.Metadata,
-		})
 	}
 
 	err := server.Send(response)
@@ -459,14 +359,6 @@ func (h *handlerImpl) WatchNamespaceState(request *types.WatchNamespaceStateRequ
 			}
 		}
 	}
-}
-
-func WrapShards(shardIDs []string) []*types.Shard {
-	shards := make([]*types.Shard, 0, len(shardIDs))
-	for _, shardID := range shardIDs {
-		shards = append(shards, &types.Shard{ShardKey: shardID})
-	}
-	return shards
 }
 
 // DrainShards marks the requested shards as drained for the namespace.
@@ -551,6 +443,92 @@ func (h *handlerImpl) GetDrainedShards(ctx context.Context, request *types.GetDr
 	}, nil
 }
 
+// DrainHosts marks the requested hosts as drained for the namespace.
+// Executors on a drained host are ineligible for assignment until undrained.
+// The call is idempotent, so hosts that are already drained keep their original metadata.
+func (h *handlerImpl) DrainHosts(ctx context.Context, request *types.DrainHostsRequest) (retError error) {
+	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+
+	h.startWG.Wait()
+
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return err
+	}
+	hosts := fromTypesDrainedHosts(request.GetHosts())
+	hostnames := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		hostnames = append(hostnames, host.Hostname)
+	}
+	if err := validateHostnames(hostnames); err != nil {
+		return err
+	}
+
+	err := h.storage.DrainHosts(ctx, namespace, hosts)
+	if err != nil {
+		return &types.InternalServiceError{Message: fmt.Sprintf("failed to drain hosts: %v", err)}
+	}
+
+	h.logger.Info("Drained hosts",
+		tag.ShardNamespace(namespace),
+		tag.Dynamic("requested_hosts_to_drain", hostnames),
+	)
+
+	return nil
+}
+
+// UndrainHosts removes the requested hosts from the namespace's drained set.
+// The call is idempotent, and the response returns only the hosts this call removed.
+func (h *handlerImpl) UndrainHosts(ctx context.Context, request *types.UndrainHostsRequest) (resp *types.UndrainHostsResponse, retError error) {
+	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+
+	h.startWG.Wait()
+
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return nil, err
+	}
+	hostnames := request.GetHostnames()
+	if err := validateHostnames(hostnames); err != nil {
+		return nil, err
+	}
+
+	undrained, err := h.storage.UndrainHosts(ctx, namespace, hostnames)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to undrain hosts: %v", err)}
+	}
+
+	h.logger.Info("Undrained hosts",
+		tag.ShardNamespace(namespace),
+		tag.Dynamic("requested_hosts_to_undrain", hostnames),
+		tag.Dynamic("undrained_hosts", undrained),
+	)
+
+	return &types.UndrainHostsResponse{UndrainedHostnames: undrained}, nil
+}
+
+// GetDrainedHosts returns the hosts currently drained for the namespace.
+func (h *handlerImpl) GetDrainedHosts(ctx context.Context, request *types.GetDrainedHostsRequest) (resp *types.GetDrainedHostsResponse, retError error) {
+	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+
+	h.startWG.Wait()
+
+	namespace := request.GetNamespace()
+	if err := h.validateNamespace(namespace); err != nil {
+		return nil, err
+	}
+
+	hosts, err := h.storage.GetDrainedHosts(ctx, namespace)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get drained hosts: %v", err)}
+	}
+
+	return &types.GetDrainedHostsResponse{
+		Namespace: namespace,
+		Hosts:     toTypesDrainedHosts(hosts),
+	}, nil
+}
+
 // validateNamespace rejects namespaces that are absent from the static service config
 func (h *handlerImpl) validateNamespace(namespace string) error {
 	found := slices.ContainsFunc(h.shardDistributionCfg.Namespaces, func(n config.Namespace) bool {
@@ -572,6 +550,19 @@ func validateShardKeys(shardKeys []string) error {
 			return &types.BadRequestError{
 				Message: fmt.Sprintf("invalid shard key %q: must be non-empty and must not contain '/'", shardKey),
 			}
+		}
+	}
+	return nil
+}
+
+// validateHostnames rejects drain and undrain requests that storage cannot represent.
+func validateHostnames(hostnames []string) error {
+	if len(hostnames) == 0 {
+		return &types.BadRequestError{Message: "hostnames must not be empty"}
+	}
+	for _, name := range hostnames {
+		if err := hostname.Validate(name); err != nil {
+			return &types.BadRequestError{Message: err.Error()}
 		}
 	}
 	return nil
