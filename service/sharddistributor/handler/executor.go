@@ -48,13 +48,13 @@ func NewExecutorHandler(
 }
 
 func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbeatRequest) (*types.ExecutorHeartbeatResponse, error) {
+	heartbeatTime := h.timeSource.Now().UTC()
+
 	executorState, err := h.storage.GetExecutorState(ctx, request.Namespace, request.ExecutorID)
 	// We ignore Executor not found errors, since it just means that this executor heartbeat the first time.
 	if err != nil && !errors.Is(err, store.ErrExecutorNotFound) {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get heartbeat: %v", err)}
 	}
-
-	heartbeatTime := h.timeSource.Now().UTC()
 
 	newHeartbeat := store.HeartbeatState{
 		LastHeartbeat:  heartbeatTime,
