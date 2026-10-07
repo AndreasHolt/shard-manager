@@ -48,13 +48,13 @@ func NewExecutorHandler(
 }
 
 func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbeatRequest) (*types.ExecutorHeartbeatResponse, error) {
+	heartbeatTime := h.timeSource.Now().UTC()
+
 	executorState, err := h.storage.GetExecutorState(ctx, request.Namespace, request.ExecutorID)
 	// We ignore Executor not found errors, since it just means that this executor heartbeat the first time.
 	if err != nil && !errors.Is(err, store.ErrExecutorNotFound) {
 		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get heartbeat: %v", err)}
 	}
-
-	heartbeatTime := h.timeSource.Now().UTC()
 
 	newHeartbeat := store.HeartbeatState{
 		LastHeartbeat:  heartbeatTime,
@@ -144,6 +144,13 @@ func (h *executor) emitShardAssignmentMetrics(namespace string, heartbeatTime ti
 	newAssignedShardIDs := filterNewlyAssignedShardIDs(previousHeartbeat, assignedState)
 	if len(newAssignedShardIDs) == 0 {
 		// no need to emit ShardDistributorShardAssignmentDistributionLatency due to no handovers
+		return
+	}
+
+	// handovers are only observed on the first heartbeat after an assignment change,
+	// i.e. when the previous heartbeat happened before the assignment was written
+	firstHeartbeatSinceAssignment := previousHeartbeat == nil || previousHeartbeat.LastHeartbeat.Before(assignedState.LastUpdated)
+	if !firstHeartbeatSinceAssignment {
 		return
 	}
 
