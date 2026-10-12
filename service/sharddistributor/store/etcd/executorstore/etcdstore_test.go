@@ -659,6 +659,12 @@ func TestAssignShards_AssignmentVersion(t *testing.T) {
 			require.NoError(t, err)
 			assert.Contains(t, stateAfterWrite.ShardAssignments[planningExecutorID].AssignedShards, plannedShardID)
 			assert.Greater(t, stateAfterWrite.AssignmentVersion, plannedState.AssignmentVersion)
+
+			assignmentVersionKey := etcdkeys.BuildAssignmentVersionKey(tc.EtcdPrefix, tc.Namespace)
+			resp, err := tc.Client.Get(ctx, assignmentVersionKey)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), resp.Count, "Assignment version key should exist")
+			assert.JSONEq(t, `{}`, string(resp.Kvs[0].Value))
 		})
 	}
 }
