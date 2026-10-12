@@ -198,7 +198,6 @@ const (
 	ShardDistributorStoreRecordShardStatisticsScope
 	ShardDistributorStoreRecordShardStatisticsBatchScope
 	ShardDistributorStoreSubscribeToExecutorStatusChangesScope
-	ShardDistributorStoreDeleteAssignedStatesScope
 	ShardDistributorStoreResetNamespaceScope
 	ShardDistributorStoreDrainShardsScope
 	ShardDistributorStoreUndrainShardsScope
@@ -273,7 +272,6 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		ShardDistributorStoreRecordShardStatisticsScope:            {operation: "StoreRecordShardStatistics"},
 		ShardDistributorStoreRecordShardStatisticsBatchScope:       {operation: "StoreRecordShardStatisticsBatch"},
 		ShardDistributorStoreSubscribeToExecutorStatusChangesScope: {operation: "StoreSubscribeToExecutorStatusChanges"},
-		ShardDistributorStoreDeleteAssignedStatesScope:             {operation: "StoreDeleteAssignedStates"},
 		ShardDistributorStoreResetNamespaceScope:                   {operation: "StoreResetNamespace"},
 		ShardDistributorStoreDrainShardsScope:                      {operation: "StoreDrainShards"},
 		ShardDistributorStoreUndrainShardsScope:                    {operation: "StoreUndrainShards"},

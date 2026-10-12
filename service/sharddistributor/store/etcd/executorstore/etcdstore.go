@@ -627,23 +627,6 @@ func (s *executorStoreImpl) DeleteExecutors(ctx context.Context, namespace strin
 	return nil
 }
 
-func (s *executorStoreImpl) DeleteAssignedStates(ctx context.Context, namespace string, executorIDs []string, guard store.GuardFunc) error {
-	if len(executorIDs) == 0 {
-		return nil
-	}
-	ops := make([]clientv3.Op, 0, len(executorIDs))
-
-	for _, executorID := range executorIDs {
-		executorIDPrefix := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorAssignedStateKey)
-		ops = append(ops, clientv3.OpDelete(executorIDPrefix, clientv3.WithPrefix()))
-	}
-
-	if _, err := s.commitOps(ctx, ops, guard); err != nil {
-		return fmt.Errorf("delete assigned states: %w", err)
-	}
-	return nil
-}
-
 // DeleteShardStats deletes shard statistics for the given shard IDs.
 // If the operation fails (e.g. due to leadership loss), it returns immediately.
 // Partial deletions are acceptable as the periodic cleanup loop will retry remaining keys.

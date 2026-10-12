@@ -85,9 +85,6 @@ type Store interface {
 	SubscribeToNamespaceChanges(namespace string) (<-chan struct{}, error)
 	DeleteExecutors(ctx context.Context, namespace string, executorIDs []string, guard GuardFunc) error
 
-	// DeleteAssignedStates deletes the assigned states of multiple executors within a namespace.
-	DeleteAssignedStates(ctx context.Context, namespace string, executorIDs []string, guard GuardFunc) error
-
 	GetExecutorState(ctx context.Context, namespace string, executorID string) (ExecutorState, error)
 	RecordHeartbeat(ctx context.Context, namespace, executorID string, state HeartbeatState) error
 	RecordShardStatistics(ctx context.Context, namespace, executorID string, assignmentModRevision int64, statistics map[string]ShardStatistics) error
