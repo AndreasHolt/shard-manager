@@ -545,14 +545,12 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 
 	nestedResp := txnResp.Responses[0].GetResponseTxn()
 	if !nestedResp.Succeeded {
-		// This means our revision checks failed. Each ELSE operation reads one compared key.
+		// This means our revision checks failed.
 		failingRevisionString := ""
-		for _, response := range nestedResp.Responses {
-			for _, keyValue := range response.GetResponseRange().Kvs {
-				expectedValue, ok := comparisonMaps[string(keyValue.Key)]
-				if !ok || expectedValue != keyValue.ModRevision {
-					failingRevisionString = failingRevisionString + fmt.Sprintf("{ key: %s, expected:%v, actual: %v }", string(keyValue.Key), expectedValue, keyValue.ModRevision)
-				}
+		for _, keyValue := range nestedResp.Responses[0].GetResponseRange().Kvs {
+			expectedValue, ok := comparisonMaps[string(keyValue.Key)]
+			if !ok || expectedValue != keyValue.ModRevision {
+				failingRevisionString = failingRevisionString + fmt.Sprintf("{ key: %s, expected:%v, actual: %v }", string(keyValue.Key), expectedValue, keyValue.ModRevision)
 			}
 		}
 		return fmt.Errorf("%w: transaction failed, a shard may have been concurrently assigned, %v", store.ErrVersionConflict, failingRevisionString)
