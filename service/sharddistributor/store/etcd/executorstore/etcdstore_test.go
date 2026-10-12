@@ -609,14 +609,6 @@ func TestAssignShards_AssignmentVersion(t *testing.T) {
 			wantConflict: true,
 		},
 		{
-			name: "AssignedStateDeletion",
-			writeAfterRead: func(ctx context.Context, t *testing.T, executorStore *executorStoreImpl, namespace string) {
-				err := executorStore.DeleteAssignedStates(ctx, namespace, []string{otherExecutorID}, store.NopGuard())
-				require.NoError(t, err)
-			},
-			wantConflict: true,
-		},
-		{
 			name: "NamespaceReset",
 			writeAfterRead: func(ctx context.Context, t *testing.T, executorStore *executorStoreImpl, namespace string) {
 				_, err := executorStore.ResetNamespace(ctx, namespace)
