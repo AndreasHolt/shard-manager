@@ -356,9 +356,8 @@ func TestGetState(t *testing.T) {
 	assert.NotZero(t, namespaceState.AssignmentVersion)
 }
 
-// The assignment read covers several etcd ranges, and the drained set and the assignment
-// version come from the later ones, so a test that only checks assignments would not
-// notice them going missing.
+// GetAssignmentState reads assignments, drained shards and the assignment version
+// separately, so the test checks all three.
 func TestGetAssignmentState(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)
 	executorStore := createStore(t, tc)

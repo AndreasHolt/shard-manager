@@ -122,10 +122,10 @@ type AssignmentState struct {
 	// state use it to discard a snapshot older than the one they hold.
 	Revision int64
 
-	// AssignmentVersion identifies the last assignment write in the namespace. Unlike
-	// Revision, it changes only when assignments change. Writers pass it back so a
-	// write planned from an outdated snapshot fails. Zero means the namespace has no
-	// assignment version yet.
+	// AssignmentVersion is the store revision of the last assignment write in the
+	// namespace. Writers pass it back with the new state, so the write fails if another
+	// assignment write committed after the read. Zero means the assignment version key
+	// doesn't exist yet.
 	AssignmentVersion int64
 }
 

@@ -495,14 +495,12 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 		return nil
 	}
 
-	// Check and advance the namespace's assignment version, so the write fails if any
-	// other assignment write committed after the new state was read.
+	// Commit only if the assignment version hasn't changed since GetState returned it,
+	// and advance it so that writers who read the old version fail.
 	assignmentVersionKey := etcdkeys.BuildAssignmentVersionKey(s.prefix, namespace)
 	expectedAssignmentVersion := request.NewState.AssignmentVersion
 	comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(assignmentVersionKey), "=", expectedAssignmentVersion))
-	comparisonMaps[assignmentVersionKey] = expectedAssignmentVersion
 	ops = append(ops, s.advanceAssignmentVersionOp(namespace))
-	opsElse = append(opsElse, clientv3.OpGet(assignmentVersionKey))
 
 	// 3. Apply the guard function to get the base transaction, which may already have an 'If' condition for leadership.
 	nativeTxn := s.client.Txn(ctx)
@@ -628,7 +626,7 @@ func (s *executorStoreImpl) DeleteExecutors(ctx context.Context, namespace strin
 	if len(executorIDs) == 0 {
 		return nil
 	}
-	ops := make([]clientv3.Op, 0, len(executorIDs)+1)
+	ops := make([]clientv3.Op, 0, len(executorIDs)+1) // one delete per executor and the assignment_version put
 
 	for _, executorID := range executorIDs {
 		executorIDPrefix := etcdkeys.BuildExecutorIDPrefix(s.prefix, namespace, executorID)
