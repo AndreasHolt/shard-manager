@@ -500,7 +500,7 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 	assignmentVersionKey := etcdkeys.BuildAssignmentVersionKey(s.prefix, namespace)
 	expectedAssignmentVersion := request.NewState.AssignmentVersion
 	comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(assignmentVersionKey), "=", expectedAssignmentVersion))
-	ops = append(ops, s.advanceAssignmentVersionOp(namespace))
+	ops = append(ops, s.putAssignmentVersionOp(namespace))
 
 	// 3. Apply the guard function to get the base transaction, which may already have an 'If' condition for leadership.
 	nativeTxn := s.client.Txn(ctx)
@@ -632,7 +632,7 @@ func (s *executorStoreImpl) DeleteExecutors(ctx context.Context, namespace strin
 		executorIDPrefix := etcdkeys.BuildExecutorIDPrefix(s.prefix, namespace, executorID)
 		ops = append(ops, clientv3.OpDelete(executorIDPrefix, clientv3.WithPrefix()))
 	}
-	ops = append(ops, s.advanceAssignmentVersionOp(namespace))
+	ops = append(ops, s.putAssignmentVersionOp(namespace))
 
 	if _, err := s.commitOps(ctx, ops, guard); err != nil {
 		return fmt.Errorf("delete executors: %w", err)
@@ -934,9 +934,9 @@ func (s *executorStoreImpl) RecordShardStatisticsBatch(ctx context.Context, name
 	return multiError
 }
 
-// advanceAssignmentVersionOp rewrites the assignment version key, which gives it a new
+// putAssignmentVersionOp rewrites the assignment version key, which gives it a new
 // mod revision. The value is an empty JSON object, so fields can be added later.
-func (s *executorStoreImpl) advanceAssignmentVersionOp(namespace string) clientv3.Op {
+func (s *executorStoreImpl) putAssignmentVersionOp(namespace string) clientv3.Op {
 	return clientv3.OpPut(etcdkeys.BuildAssignmentVersionKey(s.prefix, namespace), "{}")
 }
 
