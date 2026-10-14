@@ -93,9 +93,28 @@ func Bool(b bool) Tag {
 	return newBoolTag("bool", b)
 }
 
+// ActorType returns type of the actor (service or user) making this request
+func ActorType(actorType string) Tag {
+	return newStringTag("actor-type", actorType)
+}
+
 // ActorID returns tag for the actor ID
 func ActorID(actorID string) Tag {
 	return newStringTag("actor-id", actorID)
+}
+
+// ActorEmail returns tag for the actor's email address
+func ActorEmail(actorEmail string) Tag {
+	return newStringTag("actor-email", actorEmail)
+}
+
+func IsShadowModeEnabled(isShadow bool) Tag {
+	return newBoolTag("is-shadow-mode-enabled", isShadow)
+}
+
+// HandlerCall returns tag for the API name of a request
+func HandlerCall(handlerCall string) Tag {
+	return newStringTag("handler-call", handlerCall)
 }
 
 // LoggingCallAtKey is reserved tag
