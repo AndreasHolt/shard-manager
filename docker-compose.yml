@@ -1,0 +1,26 @@
+services:
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.6.15
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+    ports:
+      # etcd runs without authentication, so only expose it on the host's loopback
+      - "127.0.0.1:2379:2379"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "endpoint", "health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  shard-manager:
+    build: .
+    image: shard-manager:local
+    ports:
+      - "7943:7943"
+    depends_on:
+      etcd:
+        condition: service_healthy
