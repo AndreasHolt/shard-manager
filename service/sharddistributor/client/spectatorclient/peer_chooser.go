@@ -83,16 +83,13 @@ func NewSpectatorPeerChooser(
 	}
 }
 
-// Start satisfies the peer.Chooser interface. It is safe to call repeatedly and
-// concurrently; only the first call starts the chooser. A stopped chooser does
-// not start again.
+// Start satisfies the peer.Chooser interface. A stopped chooser does not start again.
 func (c *SpectatorPeerChooser) Start() error {
 	return c.once.Start(c.start)
 }
 
-// Stop satisfies the peer.Chooser interface. It is safe to call repeatedly and
-// concurrently; only the first call stops the chooser. Stop returns once the
-// eviction loop has exited and every cached peer is released.
+// Stop satisfies the peer.Chooser interface. It returns once the eviction loop
+// has exited and every cached peer is released.
 func (c *SpectatorPeerChooser) Stop() error {
 	return c.once.Stop(c.stop)
 }
