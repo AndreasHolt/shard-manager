@@ -112,10 +112,10 @@ func TestSpectatorPeerChooser_ConcurrentStartStop(t *testing.T) {
 	chooser.SetSpectators(&Spectators{spectators: map[string]Spectator{namespace: mockSpectator}})
 
 	// Several outbounds can share one chooser, and yarpc starts and stops them concurrently.
-	owners := 3
+	outbounds := 3
 	callConcurrently := func(lifecycleMethod func() error) {
 		var wg sync.WaitGroup
-		for range owners {
+		for range outbounds {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
