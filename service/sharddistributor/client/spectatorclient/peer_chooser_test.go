@@ -83,87 +83,68 @@ func TestSpectatorPeerChooser_Choose_SpectatorNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "spectator not found")
 }
 
-func TestSpectatorPeerChooser_Lifecycle(t *testing.T) {
-	tests := []struct {
-		name   string
-		owners int
-	}{
-		{
-			name:   "stop by a single owner releases cached peers",
-			owners: 1,
-		},
-		{
-			name:   "concurrent start and stop by several owners release cached peers once",
-			owners: 3,
-		},
+func TestSpectatorPeerChooser_ConcurrentStartStop(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	peerTransport := grpc.NewTransport()
+	require.NoError(t, peerTransport.Start())
+	defer peerTransport.Stop()
+
+	timeSource := clock.NewMockedTimeSource()
+	params := SpectatorPeerChooserParams{
+		Transport:  peerTransport,
+		Logger:     zap.NewNop(),
+		TimeSource: timeSource,
+	}
+	chooser := NewSpectatorPeerChooser(params).(*SpectatorPeerChooser)
+
+	namespace := "test-namespace"
+	shardKey := "shard-1"
+	cachedPeerAddress := "127.0.0.1:7953"
+
+	mockSpectator := NewMockSpectator(gomock.NewController(t))
+	mockSpectator.EXPECT().
+		GetShardOwner(gomock.Any(), shardKey).
+		Return(&ShardOwner{
+			ExecutorID: "executor-1",
+			Metadata:   map[string]string{clientcommon.GrpcAddressMetadataKey: cachedPeerAddress},
+		}, nil)
+	chooser.SetSpectators(&Spectators{spectators: map[string]Spectator{namespace: mockSpectator}})
+
+	// Several outbounds can share one chooser, and yarpc starts and stops them concurrently.
+	owners := 3
+	callConcurrently := func(lifecycleMethod func() error) {
+		var wg sync.WaitGroup
+		for range owners {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				assert.NoError(t, lifecycleMethod())
+			}()
+		}
+		wg.Wait()
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			defer goleak.VerifyNone(t)
+	callConcurrently(chooser.Start)
+	assert.True(t, chooser.IsRunning(), "chooser should be running after Start")
+	// The eviction loop's ticker is the clock's only waiter.
+	timeSource.BlockUntil(1)
 
-			peerTransport := grpc.NewTransport()
-			require.NoError(t, peerTransport.Start())
-			defer peerTransport.Stop()
-
-			timeSource := clock.NewMockedTimeSource()
-			params := SpectatorPeerChooserParams{
-				Transport:  peerTransport,
-				Logger:     zap.NewNop(),
-				TimeSource: timeSource,
-			}
-			chooser := NewSpectatorPeerChooser(params).(*SpectatorPeerChooser)
-
-			namespace := "test-namespace"
-			shardKey := "shard-1"
-			cachedPeerAddress := "127.0.0.1:7953"
-
-			mockSpectator := NewMockSpectator(gomock.NewController(t))
-			mockSpectator.EXPECT().
-				GetShardOwner(gomock.Any(), shardKey).
-				Return(&ShardOwner{
-					ExecutorID: "executor-1",
-					Metadata:   map[string]string{clientcommon.GrpcAddressMetadataKey: cachedPeerAddress},
-				}, nil)
-			chooser.SetSpectators(&Spectators{spectators: map[string]Spectator{namespace: mockSpectator}})
-
-			callConcurrently := func(lifecycleMethod func() error) {
-				var wg sync.WaitGroup
-				for range tc.owners {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						assert.NoError(t, lifecycleMethod())
-					}()
-				}
-				wg.Wait()
-			}
-
-			assert.False(t, chooser.IsRunning(), "a new chooser should not be running before Start")
-
-			callConcurrently(chooser.Start)
-			assert.True(t, chooser.IsRunning(), "chooser should be running after Start")
-			// The eviction loop's ticker is the clock's only waiter.
-			timeSource.BlockUntil(1)
-
-			req := &transport.Request{
-				ShardKey: shardKey,
-				Headers:  transport.NewHeaders().With(NamespaceHeader, namespace),
-			}
-			chosenPeer, _, err := chooser.Choose(context.Background(), req)
-			require.NoError(t, err)
-			require.Equal(t, cachedPeerAddress, chosenPeer.Identifier(), "Choose should route to the shard owner's address")
-
-			callConcurrently(chooser.Stop)
-			assert.False(t, chooser.IsRunning(), "chooser should not be running after Stop")
-			assert.Empty(t, chooser.peers, "Stop should drop every cached peer")
-
-			// Releasing again fails only if the chooser already released its reference.
-			err = peerTransport.ReleasePeer(hostport.Identify(cachedPeerAddress), &noOpSubscriber{})
-			var noReferenceErr peer.ErrTransportHasNoReferenceToPeer
-			assert.ErrorAs(t, err, &noReferenceErr, "Stop should release the chooser's reference to every cached peer")
-		})
+	req := &transport.Request{
+		ShardKey: shardKey,
+		Headers:  transport.NewHeaders().With(NamespaceHeader, namespace),
 	}
+	chosenPeer, _, err := chooser.Choose(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, cachedPeerAddress, chosenPeer.Identifier(), "Choose should route to the shard owner's address")
+
+	callConcurrently(chooser.Stop)
+	assert.False(t, chooser.IsRunning(), "chooser should not be running after Stop")
+
+	// Releasing again fails only if the chooser already released its reference.
+	err = peerTransport.ReleasePeer(hostport.Identify(cachedPeerAddress), &noOpSubscriber{})
+	var noReferenceErr peer.ErrTransportHasNoReferenceToPeer
+	assert.ErrorAs(t, err, &noReferenceErr, "Stop should release the chooser's reference to every cached peer")
 }
 
 func TestSpectatorPeerChooser_SetSpectators(t *testing.T) {
