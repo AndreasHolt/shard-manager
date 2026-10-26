@@ -120,11 +120,12 @@ func TestRebalanceShards_InitialDistribution(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments, 2)
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, 1)
-			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, 1)
-			assert.Lenf(t, request.NewState.ShardAssignments["exec-1"].ShardHandoverStats, 0, "no handover stats should be present on initial assignment")
-			assert.Lenf(t, request.NewState.ShardAssignments["exec-2"].ShardHandoverStats, 0, "no handover stats should be present on initial assignment")
+			assert.Empty(t, request.Release, "executors without previous shards have nothing to release")
+			assert.Len(t, request.Acquire, 2)
+			assert.Len(t, request.Acquire["exec-1"].AssignedShards, 1)
+			assert.Len(t, request.Acquire["exec-2"].AssignedShards, 1)
+			assert.Lenf(t, request.Acquire["exec-1"].ShardHandoverStats, 0, "no handover stats should be present on initial assignment")
+			assert.Lenf(t, request.Acquire["exec-2"].ShardHandoverStats, 0, "no handover stats should be present on initial assignment")
 			return nil
 		},
 	)
@@ -158,10 +159,14 @@ func TestRebalanceShards_ExecutorRemoved(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, 2)
-			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, 0)
-			assert.Lenf(t, request.NewState.ShardAssignments["exec-1"].ShardHandoverStats, 2, "both shards move from the draining executor in the snapshot")
-			assert.Lenf(t, request.NewState.ShardAssignments["exec-2"].ShardHandoverStats, 0, "no handover stats should be present for drained executor")
+			assert.Len(t, request.Acquire["exec-1"].AssignedShards, 2)
+			assert.Lenf(t, request.Acquire["exec-1"].ShardHandoverStats, 2, "both shards move from the draining executor in the snapshot")
+			assert.NotContains(t, request.Release, "exec-1", "exec-1 had no shards to release")
+
+			assert.NotContains(t, request.Acquire, "exec-2", "the draining executor gains no shards")
+			assert.Contains(t, request.Release, "exec-2")
+			assert.Len(t, request.Release["exec-2"].AssignedShards, 0)
+			assert.Lenf(t, request.Release["exec-2"].ShardHandoverStats, 0, "no handover stats should be present for drained executor")
 			return nil
 		},
 	)
@@ -203,7 +208,6 @@ func TestRebalanceShards_ClearsAssignmentOfLiveNonAssignableExecutor(t *testing.
 								"0": {Status: types.AssignmentStatusREADY},
 								"1": {Status: types.AssignmentStatusREADY},
 							},
-							ModRevision: 7,
 						},
 					},
 				},
@@ -221,12 +225,11 @@ func TestRebalanceShards_ClearsAssignmentOfLiveNonAssignableExecutor(t *testing.
 			mocks.election.EXPECT().Guard().Return(store.NopGuard())
 			mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-					assert.Len(t, request.NewState.ShardAssignments[healthy].AssignedShards, 2)
+					assert.Len(t, request.Acquire[healthy].AssignedShards, 2)
 
-					emptied := request.NewState.ShardAssignments[nonAssignable]
+					assert.Contains(t, request.Release, nonAssignable, "the emptied assignment has to be written out")
+					emptied := request.Release[nonAssignable]
 					assert.Empty(t, emptied.AssignedShards, "the executor must stop being told to serve its old shards")
-					assert.Equal(t, int64(7), emptied.ModRevision)
-					assert.Contains(t, request.ChangedExecutors, nonAssignable, "the emptied assignment has to be written out")
 					assert.Empty(t, request.ExecutorsToDelete, "a heartbeating executor is not stale")
 					return nil
 				},
@@ -252,13 +255,11 @@ func TestRebalanceShards_ExecutorStale(t *testing.T) {
 			AssignedShards: map[string]*types.ShardAssignment{
 				"0": {Status: types.AssignmentStatusREADY},
 			},
-			ModRevision: 1,
 		},
 		"exec-2": {
 			AssignedShards: map[string]*types.ShardAssignment{
 				"1": {Status: types.AssignmentStatusREADY},
 			},
-			ModRevision: 1,
 		},
 	}
 	mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
@@ -269,10 +270,11 @@ func TestRebalanceShards_ExecutorStale(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments, 1)
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, 2)
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].ShardHandoverStats, 1, "only shard 1 should have handover stats")
-			assert.Equal(t, request.ExecutorsToDelete, map[string]int64{"exec-2": 1})
+			assert.Empty(t, request.Release, "exec-1 keeps its shard and the stale executor is deleted")
+			assert.Len(t, request.Acquire, 1)
+			assert.Len(t, request.Acquire["exec-1"].AssignedShards, 2)
+			assert.Len(t, request.Acquire["exec-1"].ShardHandoverStats, 1, "only shard 1 should have handover stats")
+			assert.Equal(t, []string{"exec-2"}, request.ExecutorsToDelete)
 			return nil
 		},
 	)
@@ -424,16 +426,10 @@ func TestCleanupStaleExecutors(t *testing.T) {
 		"exec-orphan": {},
 	}
 
-	namespaceState := &store.NamespaceState{
-		AssignmentState: store.AssignmentState{
-			ShardAssignments: map[string]store.AssignedState{
-				"exec-orphan": {ModRevision: 12},
-			},
-		},
-		Executors: heartbeats}
+	namespaceState := &store.NamespaceState{Executors: heartbeats}
 
 	staleExecutors := processor.identifyStaleExecutors(namespaceState)
-	assert.Equal(t, map[string]int64{"exec-stale": 0, "exec-orphan": 12}, staleExecutors)
+	assert.Equal(t, map[string]struct{}{"exec-stale": {}, "exec-orphan": {}}, staleExecutors)
 }
 
 func TestCleanupStaleShardStats(t *testing.T) {
@@ -670,41 +666,37 @@ func assignmentsFor(executorID string, shardIDs ...string) map[string]store.Assi
 }
 
 func TestRebalanceShards_DrainedShardsAreDroppedFromExecutors(t *testing.T) {
-	for _, namespaceType := range []string{config.NamespaceTypeFixed, config.NamespaceTypeEphemeral} {
-		t.Run(namespaceType, func(t *testing.T) {
-			mocks := setupProcessorTest(t, namespaceType)
+	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 
-			processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
-			now := mocks.timeSource.Now()
-			mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
-				AssignmentState: store.AssignmentState{
-					ShardAssignments: assignmentsFor("exec-1", "0", "1"),
-					DrainedShards:    map[string]struct{}{"1": {}},
-				},
-				Executors: map[string]store.HeartbeatState{
-					"exec-1": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
-				}}, nil)
+	now := mocks.timeSource.Now()
+	mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
+		AssignmentState: store.AssignmentState{
+			ShardAssignments: assignmentsFor("exec-1", "0", "1"),
+			DrainedShards:    map[string]struct{}{"1": {}},
+		},
+		Executors: map[string]store.HeartbeatState{
+			"exec-1": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		}}, nil)
 
-			// Shard "1" is drained, so only active shard "0" remains assigned.
-			mocks.election.EXPECT().Guard().Return(store.NopGuard())
+	// Shard "1" is drained, so only active shard "0" remains assigned.
+	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 
-			var request store.AssignShardsRequest
-			mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
-				func(_ context.Context, _ string, req store.AssignShardsRequest, _ store.GuardFunc) error {
-					request = req
-					return nil
-				})
-
-			// Triggering rebalance to reassign the shards
-			require.NoError(t, processor.rebalanceShards(context.Background()))
-
-			assigned := request.NewState.ShardAssignments["exec-1"].AssignedShards
-
-			assert.Equal(t, []string{"0"}, slices.Sorted(maps.Keys(assigned)), "drained shard is dropped")
-			assert.Contains(t, request.ChangedExecutors, "exec-1", "exec-1 had the drained shard")
+	var request store.AssignShardsRequest
+	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, req store.AssignShardsRequest, _ store.GuardFunc) error {
+			request = req
+			return nil
 		})
-	}
+
+	// Triggering rebalance to reassign the shards
+	require.NoError(t, processor.rebalanceShards(context.Background()))
+
+	assert.Contains(t, request.Release, "exec-1", "exec-1 had the drained shard")
+	assigned := request.Release["exec-1"].AssignedShards
+	assert.Equal(t, []string{"0"}, slices.Sorted(maps.Keys(assigned)), "drained shard is dropped")
+	assert.Empty(t, request.Acquire, "dropping a drained shard gives no executor a new shard")
 }
 
 func TestRebalanceShards_AlreadyUnassignedDrainedShardsSkipAssign(t *testing.T) {
@@ -754,7 +746,8 @@ func TestRebalanceShards_WithUnassignedShards(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, 2, "Both shards should now be assigned to exec-1")
+			assert.Empty(t, request.Release, "exec-1 keeps its shard")
+			assert.Len(t, request.Acquire["exec-1"].AssignedShards, 2, "Both shards should now be assigned to exec-1")
 			return nil
 		},
 	)
@@ -764,7 +757,8 @@ func TestRebalanceShards_WithUnassignedShards(t *testing.T) {
 }
 
 func TestRebalanceShards_AppliesNaiveLoadBalancingPlan(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
+	mocks.cfg.ShardNum = 3
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
 	now := mocks.timeSource.Now()
@@ -774,21 +768,21 @@ func TestRebalanceShards_AppliesNaiveLoadBalancingPlan(t *testing.T) {
 			Status:        types.ExecutorStatusACTIVE,
 			LastHeartbeat: now,
 			ReportedShards: map[string]*types.ShardStatusReport{
-				"shard-1": {ShardLoad: 5.0},
+				"0": {ShardLoad: 5.0},
 			},
 		},
 		"exec-2": {
 			Status:        types.ExecutorStatusACTIVE,
 			LastHeartbeat: now,
 			ReportedShards: map[string]*types.ShardStatusReport{
-				"shard-2": {ShardLoad: 30.0},
-				"shard-3": {ShardLoad: 20.0},
+				"1": {ShardLoad: 30.0},
+				"2": {ShardLoad: 20.0},
 			},
 		},
 	}
 	assignments := map[string]store.AssignedState{
-		"exec-1": {AssignedShards: map[string]*types.ShardAssignment{"shard-1": {Status: types.AssignmentStatusREADY}}},
-		"exec-2": {AssignedShards: map[string]*types.ShardAssignment{"shard-2": {Status: types.AssignmentStatusREADY}, "shard-3": {Status: types.AssignmentStatusREADY}}},
+		"exec-1": {AssignedShards: map[string]*types.ShardAssignment{"0": {Status: types.AssignmentStatusREADY}}},
+		"exec-2": {AssignedShards: map[string]*types.ShardAssignment{"1": {Status: types.AssignmentStatusREADY}, "2": {Status: types.AssignmentStatusREADY}}},
 	}
 
 	mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
@@ -799,8 +793,10 @@ func TestRebalanceShards_AppliesNaiveLoadBalancingPlan(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, 2)
-			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, 1)
+			assert.Len(t, request.Acquire["exec-1"].AssignedShards, 2)
+			assert.NotContains(t, request.Release, "exec-1", "exec-1 only gains a shard")
+			assert.Len(t, request.Release["exec-2"].AssignedShards, 1)
+			assert.NotContains(t, request.Acquire, "exec-2", "exec-2 only loses a shard")
 			return nil
 		},
 	)
@@ -810,10 +806,11 @@ func TestRebalanceShards_AppliesNaiveLoadBalancingPlan(t *testing.T) {
 }
 
 func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 	initialShardsPerExecutor := 50
 	// With 100 shards total, a 1% move budget permits one shard move.
 	expectedMovedShards := 1
+	mocks.cfg.ShardNum = int64(2 * initialShardsPerExecutor)
 
 	mocks.sdConfig.LoadBalancingMode = func(namespace string) string {
 		return config.LoadBalancingModeGREEDY
@@ -851,12 +848,12 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	}
 	shardStats := make(map[string]store.ShardStatistics)
 	for i := range initialShardsPerExecutor {
-		shardID := "a-" + strconv.Itoa(i)
+		shardID := strconv.Itoa(i)
 		assignments["exec-1"].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 3.0, LastUpdateTime: now}
 	}
 	for i := range initialShardsPerExecutor {
-		shardID := "b-" + strconv.Itoa(i)
+		shardID := strconv.Itoa(initialShardsPerExecutor + i)
 		assignments["exec-2"].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1.0, LastUpdateTime: now}
 	}
@@ -870,8 +867,8 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	mocks.election.EXPECT().Guard().Return(store.NopGuard())
 	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
-			assert.Len(t, request.NewState.ShardAssignments["exec-1"].AssignedShards, initialShardsPerExecutor-expectedMovedShards)
-			assert.Len(t, request.NewState.ShardAssignments["exec-2"].AssignedShards, initialShardsPerExecutor+expectedMovedShards)
+			assert.Len(t, request.Release["exec-1"].AssignedShards, initialShardsPerExecutor-expectedMovedShards)
+			assert.Len(t, request.Acquire["exec-2"].AssignedShards, initialShardsPerExecutor+expectedMovedShards)
 			return nil
 		},
 	)
@@ -894,75 +891,8 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 	assert.Equal(t, zapcore.WarnLevel, entries[0].Level)
 }
 
-func TestGetShards_Utility(t *testing.T) {
-	t.Run("Fixed type", func(t *testing.T) {
-		cfg := config.Namespace{Type: config.NamespaceTypeFixed, ShardNum: 5}
-		shards := getShards(cfg, nil, nil)
-		assert.Equal(t, []string{"0", "1", "2", "3", "4"}, shards)
-	})
-
-	t.Run("Ephemeral type", func(t *testing.T) {
-		cfg := config.Namespace{Type: config.NamespaceTypeEphemeral}
-		nsState := &store.NamespaceState{
-			AssignmentState: store.AssignmentState{
-				ShardAssignments: map[string]store.AssignedState{
-					"executor1": {
-						AssignedShards: map[string]*types.ShardAssignment{
-							"s0": {Status: types.AssignmentStatusREADY},
-							"s1": {Status: types.AssignmentStatusREADY},
-							"s2": {Status: types.AssignmentStatusREADY},
-						},
-					},
-					"executor2": {
-						AssignedShards: map[string]*types.ShardAssignment{
-							"s3": {Status: types.AssignmentStatusREADY},
-							"s4": {Status: types.AssignmentStatusREADY},
-						},
-					},
-				},
-			},
-		}
-		shards := getShards(cfg, nsState, nil)
-		slices.Sort(shards)
-		assert.Equal(t, []string{"s0", "s1", "s2", "s3", "s4"}, shards)
-	})
-
-	t.Run("Ephemeral type with deleted shards", func(t *testing.T) {
-		cfg := config.Namespace{Type: config.NamespaceTypeEphemeral}
-		nsState := &store.NamespaceState{
-			AssignmentState: store.AssignmentState{
-				ShardAssignments: map[string]store.AssignedState{
-					"executor1": {
-						AssignedShards: map[string]*types.ShardAssignment{
-							"s0": {Status: types.AssignmentStatusREADY},
-							"s1": {Status: types.AssignmentStatusREADY},
-							"s2": {Status: types.AssignmentStatusREADY},
-						},
-					},
-					"executor2": {
-						AssignedShards: map[string]*types.ShardAssignment{
-							"s3": {Status: types.AssignmentStatusREADY},
-							"s4": {Status: types.AssignmentStatusREADY},
-						},
-					},
-				},
-			},
-		}
-		deletedShards := map[string]store.ShardState{
-			"s0": {},
-			"s1": {},
-		}
-		shards := getShards(cfg, nsState, deletedShards)
-		slices.Sort(shards)
-		assert.Equal(t, []string{"s2", "s3", "s4"}, shards)
-	})
-
-	// Unknown type
-	t.Run("Other type", func(t *testing.T) {
-		cfg := config.Namespace{Type: "other"}
-		shards := getShards(cfg, nil, nil)
-		assert.Nil(t, shards)
-	})
+func TestMakeShards(t *testing.T) {
+	assert.Equal(t, []string{"0", "1", "2", "3", "4"}, makeShards(5))
 }
 
 func TestAssignShardsToEmptyExecutors(t *testing.T) {
@@ -1293,75 +1223,89 @@ func TestBuildHandoverStats_MultipleShards(t *testing.T) {
 	assert.Equal(t, expected, stats)
 }
 
-func TestBuildNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
-	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+func TestBuildAssignShardsRequest(t *testing.T) {
+	now := clock.NewMockedTimeSource().Now().UTC()
+	earlier := now.Add(-time.Hour)
+	assignedState := func(lastUpdated time.Time, shardIDs ...string) store.AssignedState {
+		assigned := make(map[string]*types.ShardAssignment, len(shardIDs))
+		for _, shardID := range shardIDs {
+			assigned[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
+		}
+		return store.AssignedState{AssignedShards: assigned, LastUpdated: lastUpdated}
+	}
+	noStates := map[string]store.AssignedState{}
 
-	now := mocks.timeSource.Now().UTC()
-	oldTime := now.Add(-time.Hour)
-
-	namespaceState := &store.NamespaceState{
-		AssignmentState: store.AssignmentState{
-			ShardAssignments: map[string]store.AssignedState{
-				"exec-1": {
-					AssignedShards: map[string]*types.ShardAssignment{
-						"shard-1": {Status: types.AssignmentStatusREADY},
-						"shard-2": {Status: types.AssignmentStatusREADY},
-					},
-					LastUpdated: oldTime,
-					ModRevision: 10,
-				},
-				"exec-2": {
-					AssignedShards: map[string]*types.ShardAssignment{
-						"shard-3": {Status: types.AssignmentStatusREADY},
-					},
-					LastUpdated: oldTime,
-					ModRevision: 20,
-				},
-				"exec-4": {
-					AssignedShards: map[string]*types.ShardAssignment{
-						"shard-6": {Status: types.AssignmentStatusREADY},
-					},
-					LastUpdated: oldTime,
-					ModRevision: 30,
-				},
+	tests := []struct {
+		name                string
+		previousAssignments map[string]store.AssignedState
+		newAssignments      map[string]store.AssignedState
+		staleExecutors      map[string]struct{}
+		want                store.AssignShardsRequest
+	}{
+		{
+			name:                "executor with unchanged shards is not written",
+			previousAssignments: map[string]store.AssignedState{"exec": assignedState(earlier, "0", "1")},
+			newAssignments:      map[string]store.AssignedState{"exec": assignedState(now, "0", "1")},
+			want:                store.AssignShardsRequest{Release: noStates, Acquire: noStates},
+		},
+		{
+			name: "moved shard is released by its source and acquired by its destination",
+			previousAssignments: map[string]store.AssignedState{
+				"exec-a": assignedState(earlier, "0", "1"),
+				"exec-b": assignedState(earlier, "2"),
+			},
+			newAssignments: map[string]store.AssignedState{
+				"exec-a": assignedState(now, "0"),
+				"exec-b": assignedState(now, "1", "2"),
+			},
+			want: store.AssignShardsRequest{
+				Release: map[string]store.AssignedState{"exec-a": assignedState(now, "0")},
+				Acquire: map[string]store.AssignedState{"exec-b": assignedState(now, "1", "2")},
+			},
+		},
+		{
+			name:                "executor that loses and gains shards first releases down to the shards it keeps",
+			previousAssignments: map[string]store.AssignedState{"exec": assignedState(earlier, "0", "1")},
+			newAssignments:      map[string]store.AssignedState{"exec": assignedState(now, "1", "2")},
+			want: store.AssignShardsRequest{
+				Release: map[string]store.AssignedState{"exec": assignedState(now, "1")},
+				Acquire: map[string]store.AssignedState{"exec": assignedState(now, "1", "2")},
+			},
+		},
+		{
+			name:           "new executor without shards gets an empty record",
+			newAssignments: map[string]store.AssignedState{"exec": assignedState(now)},
+			want: store.AssignShardsRequest{
+				Release: map[string]store.AssignedState{"exec": assignedState(now)},
+				Acquire: noStates,
+			},
+		},
+		{
+			name:           "stale executors are deleted in sorted order",
+			staleExecutors: map[string]struct{}{"exec-b": {}, "exec-a": {}},
+			want: store.AssignShardsRequest{
+				ExecutorsToDelete: []string{"exec-a", "exec-b"},
+				Release:           noStates,
+				Acquire:           noStates,
 			},
 		},
 	}
 
-	currentAssignments := map[string][]string{
-		"exec-1": {"shard-1", "shard-2"}, // unchanged
-		"exec-2": {"shard-3", "shard-4"}, // changed (added shard-4)
-		"exec-3": {"shard-5"},            // new
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := buildAssignShardsRequest(tt.previousAssignments, tt.newAssignments, tt.staleExecutors, now)
+			assert.Equal(t, tt.want, request)
+		})
 	}
-	executorsToUnassign := map[string]int64{"exec-4": 30}
-
-	newAssignments, executorsWithChangedAssignments := processor.buildNewAssignmentsState(
-		namespaceState,
-		currentAssignments,
-		executorsToUnassign,
-		namespaceState.ShardOwners(),
-		now,
-	)
-
-	assert.Len(t, newAssignments, 4)
-	assert.Equal(t, map[string]struct{}{"exec-2": {}, "exec-3": {}, "exec-4": {}}, executorsWithChangedAssignments)
-	assert.Equal(t, oldTime, newAssignments["exec-1"].LastUpdated)
-	assert.Equal(t, now, newAssignments["exec-2"].LastUpdated)
-	assert.Equal(t, int64(10), newAssignments["exec-1"].ModRevision)
-	assert.Equal(t, int64(20), newAssignments["exec-2"].ModRevision)
-	assert.Equal(t, int64(0), newAssignments["exec-3"].ModRevision)
-	assert.Empty(t, newAssignments["exec-4"].AssignedShards)
-	assert.Equal(t, int64(30), newAssignments["exec-4"].ModRevision, "cleared assignments")
 }
 
 func TestFindExecutorsToUnassign(t *testing.T) {
-	assignment := func(modRevision int64, shards ...string) store.AssignedState {
+	assignment := func(shards ...string) store.AssignedState {
 		assigned := make(map[string]*types.ShardAssignment, len(shards))
 		for _, shardID := range shards {
 			assigned[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		}
-		return store.AssignedState{AssignedShards: assigned, ModRevision: modRevision}
+		return store.AssignedState{AssignedShards: assigned}
 	}
 
 	tests := []struct {
@@ -1369,29 +1313,29 @@ func TestFindExecutorsToUnassign(t *testing.T) {
 		assignment store.AssignedState
 		assignable bool
 		stale      bool
-		want       map[string]int64
+		want       map[string]struct{}
 	}{
 		{
 			name:       "assignable executor keeps its shards",
-			assignment: assignment(7, "0"),
+			assignment: assignment("0"),
 			assignable: true,
-			want:       map[string]int64{},
+			want:       map[string]struct{}{},
 		},
 		{
-			name:       "non-assignable executor is emptied at its current revision",
-			assignment: assignment(7, "0"),
-			want:       map[string]int64{"exec": 7},
+			name:       "non-assignable executor is emptied",
+			assignment: assignment("0"),
+			want:       map[string]struct{}{"exec": {}},
 		},
 		{
 			name:       "stale executor is deleted rather than emptied",
-			assignment: assignment(7, "0"),
+			assignment: assignment("0"),
 			stale:      true,
-			want:       map[string]int64{},
+			want:       map[string]struct{}{},
 		},
 		{
 			name:       "already emptied record is not rewritten",
-			assignment: assignment(7),
-			want:       map[string]int64{},
+			assignment: assignment(),
+			want:       map[string]struct{}{},
 		},
 	}
 
@@ -1401,9 +1345,9 @@ func TestFindExecutorsToUnassign(t *testing.T) {
 			if tt.assignable {
 				assignableExecutors["exec"] = struct{}{}
 			}
-			staleExecutors := map[string]int64{}
+			staleExecutors := map[string]struct{}{}
 			if tt.stale {
-				staleExecutors["exec"] = tt.assignment.ModRevision
+				staleExecutors["exec"] = struct{}{}
 			}
 			namespaceState := &store.NamespaceState{
 				AssignmentState: store.AssignmentState{

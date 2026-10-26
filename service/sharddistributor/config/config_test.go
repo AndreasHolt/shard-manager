@@ -2,7 +2,6 @@ package config
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,8 +19,6 @@ func TestNewDynamicConfigCreatesInstanceWithProperties(t *testing.T) {
 
 	assert.NotNil(t, config)
 	assert.NotNil(t, config.LoadBalancingMode)
-	assert.NotNil(t, config.EphemeralAssignmentCoalescingWindow)
-	assert.Equal(t, 10*time.Millisecond, config.EphemeralAssignmentCoalescingWindow("test-namespace"))
 	assert.NotNil(t, config.LoadBalancingNaive.MaxDeviation)
 	assert.NotNil(t, config.LoadBalancingGreedy.PerShardCooldown)
 	assert.NotNil(t, config.LoadBalancingGreedy.LoadSmoothingTimeConstant)
@@ -29,16 +26,6 @@ func TestNewDynamicConfigCreatesInstanceWithProperties(t *testing.T) {
 	assert.NotNil(t, config.LoadBalancingGreedy.HysteresisUpperBand)
 	assert.NotNil(t, config.LoadBalancingGreedy.HysteresisLowerBand)
 	assert.NotNil(t, config.LoadBalancingGreedy.SevereImbalanceRatio)
-}
-
-func TestEphemeralAssignmentCoalescingWindowUpdates(t *testing.T) {
-	client := dynamicconfig.NewInMemoryClient()
-	dc := dynamicconfig.NewCollection(client, testlogger.New(t))
-	config := NewConfig(dc)
-
-	assert.Equal(t, 10*time.Millisecond, config.EphemeralAssignmentCoalescingWindow("test-namespace"))
-	require.NoError(t, client.UpdateValue(dynamicproperties.ShardDistributorEphemeralAssignmentCoalescingWindow, 100*time.Millisecond))
-	assert.Equal(t, 100*time.Millisecond, config.EphemeralAssignmentCoalescingWindow("test-namespace"))
 }
 
 func TestGetLoadBalancingMode(t *testing.T) {

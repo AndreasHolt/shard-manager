@@ -5,14 +5,10 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/log"
 	"github.com/cadence-workflow/shard-manager/common/log/tag"
-	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/cache"
-	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
-	"github.com/cadence-workflow/shard-manager/service/sharddistributor/ephemeralassigner"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/namespaces"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
@@ -34,13 +30,10 @@ type Manager struct {
 type Params struct {
 	fx.In
 
-	Registry      *namespaces.Registry
-	Store         store.Store
-	Config        *config.Config
-	Logger        log.Logger
-	TimeSource    clock.TimeSource
-	MetricsClient metrics.Client
-	Lifecycle     fx.Lifecycle
+	Registry  *namespaces.Registry
+	Store     store.Store
+	Logger    log.Logger
+	Lifecycle fx.Lifecycle
 }
 
 // New builds every namespace in the registry and ties their start and stop to
@@ -49,13 +42,7 @@ func New(p Params) *Manager {
 	var namespaces []Namespace
 	for _, nsCfg := range p.Registry.List() {
 		shardCache := cache.NewShardCache(nsCfg.Name, p.Store, p.Logger)
-
-		var assigner *ephemeralassigner.Assigner
-		if nsCfg.Type == config.NamespaceTypeEphemeral {
-			assigner = ephemeralassigner.New(nsCfg.Name, p.TimeSource, p.Config, p.Store, shardCache, p.MetricsClient)
-		}
-
-		namespaces = append(namespaces, newNamespace(nsCfg, shardCache, assigner))
+		namespaces = append(namespaces, newNamespace(nsCfg, shardCache))
 	}
 
 	m := newManager(p.Logger, namespaces)
@@ -86,7 +73,6 @@ func (m *Manager) stopNamespaces(nss []Namespace) {
 	}
 }
 
-// startNamespace starts the cache first, then the assigner that reads from it.
 func (m *Manager) startNamespace(ns Namespace) error {
 	logger := m.logger.WithTags(tag.ShardNamespace(ns.Name()))
 	logger.Info("Namespace state changed", tag.LifeCycleStarting)
@@ -94,20 +80,13 @@ func (m *Manager) startNamespace(ns Namespace) error {
 		logger.Error("Namespace state changed", tag.LifeCycleStartFailed, tag.Error(err))
 		return fmt.Errorf("start cache of namespace %q: %w", ns.Name(), err)
 	}
-	if assigner := ns.Assigner(); assigner != nil {
-		assigner.Start()
-	}
 	logger.Info("Namespace state changed", tag.LifeCycleStarted)
 	return nil
 }
 
-// stopNamespace stops the assigner before the cache it reads from.
 func (m *Manager) stopNamespace(ns Namespace) {
 	logger := m.logger.WithTags(tag.ShardNamespace(ns.Name()))
 	logger.Info("Namespace state changed", tag.LifeCycleStopping)
-	if assigner := ns.Assigner(); assigner != nil {
-		assigner.Stop()
-	}
 	ns.Cache().Stop()
 	logger.Info("Namespace state changed", tag.LifeCycleStopped)
 }

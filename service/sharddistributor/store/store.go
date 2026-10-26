@@ -43,19 +43,18 @@ func NopGuard() GuardFunc {
 	}
 }
 
-// AssignShardsRequest is a request to assign shards to executors, and remove unused shards.
+// AssignShardsRequest holds the assignment records the leader writes in one rebalance.
+// No state in Release gives an executor a shard it did not already hold, so
+// writing Release before Acquire never leaves a shard with two owners.
 type AssignShardsRequest struct {
-	// NewState is the new state of the namespace, containing the new assignments of shards to executors.
-	NewState *NamespaceState
-	// ExecutorsToDelete maps executor IDs to their expected ModRevision for deletion.
-	// The ModRevision is used to ensure the executor's assigned state hasn't changed since we decided to delete it.
-	ExecutorsToDelete map[string]int64
-	// ChangedExecutors is the set of executor IDs whose assigned state actually
-	// changed and need to be written. All executors in NewState.ShardAssignments
-	// are still included in the transactional ModRevision guard, but only those
-	// in ChangedExecutors get an OpPut. If nil, all executors are written
-	// (backwards-compatible default for callers that don't track deltas).
-	ChangedExecutors map[string]struct{}
+	// ExecutorsToDelete are executors whose records are removed entirely.
+	// They must not appear in Release or Acquire.
+	ExecutorsToDelete []string
+	// Release holds states that only remove shards from an executor.
+	Release map[string]AssignedState
+	// Acquire holds the final states of executors that gain shards.
+	// An executor in both maps ends with its Acquire state.
+	Acquire map[string]AssignedState
 }
 
 type Store interface {
@@ -67,9 +66,9 @@ type Store interface {
 	// skips the host drains, statistics and reported shards that GetState decodes.
 	GetAssignmentState(ctx context.Context, namespace string) (*AssignmentState, error)
 
-	// AssignShards assigns multiple shards to executors within a namespace and
-	// deletes specified executors.
-	// The operation is atomic and guarded by the provided GuardFunc.
+	// AssignShards writes the leader's assignment records and deletes the given
+	// executors. Every transaction is guarded by the provided GuardFunc, and a
+	// request too large for one transaction is not applied atomically.
 	AssignShards(ctx context.Context, namespace string, request AssignShardsRequest, guard GuardFunc) error
 
 	// RecordShardStatisticsBatch records complete statistics maps for multiple

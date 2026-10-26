@@ -31,7 +31,7 @@ import (
 
 func TestListAllProductionKeys(t *testing.T) {
 	keys := ListAllProductionKeys()
-	require.Len(t, keys, 12)
+	require.Len(t, keys, 11)
 	for _, key := range keys {
 		assert.Contains(t, strings.ToLower(key.String()), "sharddistributor")
 	}
@@ -116,13 +116,6 @@ func TestShardDistributorKeys(t *testing.T) {
 			key:          ShardDistributorLoadBalancingGreedyPerShardCooldown,
 			keyName:      "shardDistributor.loadBalancingGreedy.perShardCooldown",
 			defaultValue: time.Minute,
-			filters:      []Filter{Namespace},
-		},
-		{
-			name:         "ephemeral assignment coalescing window",
-			key:          ShardDistributorEphemeralAssignmentCoalescingWindow,
-			keyName:      "shardDistributor.ephemeralAssignment.coalescingWindow",
-			defaultValue: 10 * time.Millisecond,
 			filters:      []Filter{Namespace},
 		},
 	}

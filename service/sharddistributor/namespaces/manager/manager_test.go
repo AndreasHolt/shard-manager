@@ -10,9 +10,7 @@ import (
 	"go.uber.org/fx/fxtest"
 	"go.uber.org/mock/gomock"
 
-	"github.com/cadence-workflow/shard-manager/common/clock"
 	"github.com/cadence-workflow/shard-manager/common/log/testlogger"
-	"github.com/cadence-workflow/shard-manager/common/metrics"
 	"github.com/cadence-workflow/shard-manager/common/types"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/cache"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
@@ -23,7 +21,7 @@ import (
 func TestNew(t *testing.T) {
 	cfg := config.ShardDistribution{Namespaces: []config.Namespace{
 		{Name: "fixed", Type: config.NamespaceTypeFixed, ShardNum: 1},
-		{Name: "ephemeral", Type: config.NamespaceTypeEphemeral},
+		{Name: "other", Type: config.NamespaceTypeFixed, ShardNum: 2},
 	}}
 
 	mockStore := store.NewMockStore(gomock.NewController(t))
@@ -33,25 +31,20 @@ func TestNew(t *testing.T) {
 
 	lifecycle := fxtest.NewLifecycle(t)
 	m := New(Params{
-		Registry:      namespaces.MustNewRegistry(cfg),
-		Store:         mockStore,
-		Config:        &config.Config{},
-		Logger:        testlogger.New(t),
-		TimeSource:    clock.NewRealTimeSource(),
-		MetricsClient: metrics.NewNoopMetricsClient(),
-		Lifecycle:     lifecycle,
+		Registry:  namespaces.MustNewRegistry(cfg),
+		Store:     mockStore,
+		Logger:    testlogger.New(t),
+		Lifecycle: lifecycle,
 	})
 	lifecycle.RequireStart()
 	defer lifecycle.RequireStop()
 
 	tests := []struct {
-		name         string
-		namespace    string
-		wantErr      error
-		wantAssigner bool
+		name      string
+		namespace string
+		wantErr   error
 	}{
-		{name: "fixed has no assigner", namespace: "fixed"},
-		{name: "ephemeral has an assigner", namespace: "ephemeral", wantAssigner: true},
+		{name: "found", namespace: "fixed"},
 		{name: "unknown", namespace: "unknown", wantErr: &types.NamespaceNotFoundError{Namespace: "unknown"}},
 	}
 	for _, tt := range tests {
@@ -64,7 +57,6 @@ func TestNew(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.namespace, ns.Name())
 			assert.NotNil(t, ns.Cache())
-			assert.Equal(t, tt.wantAssigner, ns.Assigner() != nil)
 		})
 	}
 
@@ -123,9 +115,9 @@ func TestStartStop(t *testing.T) {
 			tt.expect(cacheA, cacheB, cacheC)
 			logger, logs := testlogger.NewObserved(t)
 			m := newManager(logger, []Namespace{
-				newNamespace(config.Namespace{Name: "a"}, cacheA, nil),
-				newNamespace(config.Namespace{Name: "b"}, cacheB, nil),
-				newNamespace(config.Namespace{Name: "c"}, cacheC, nil),
+				newNamespace(config.Namespace{Name: "a"}, cacheA),
+				newNamespace(config.Namespace{Name: "b"}, cacheB),
+				newNamespace(config.Namespace{Name: "c"}, cacheC),
 			})
 
 			if err := m.Start(); tt.wantErr != "" {

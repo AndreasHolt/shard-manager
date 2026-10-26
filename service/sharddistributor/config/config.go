@@ -35,9 +35,8 @@ import (
 type (
 	// Config represents configuration for shard manager service
 	Config struct {
-		LoadBalancingMode                   dynamicproperties.StringPropertyFnWithNamespaceFilters
-		MaxEtcdTxnOps                       dynamicproperties.IntPropertyFn
-		EphemeralAssignmentCoalescingWindow dynamicproperties.DurationPropertyFnWithNamespaceFilters
+		LoadBalancingMode dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MaxEtcdTxnOps     dynamicproperties.IntPropertyFn
 
 		LoadBalancingNaive  LoadBalancingNaiveConfig
 		LoadBalancingGreedy LoadBalancingGreedyConfig
@@ -77,7 +76,7 @@ type (
 
 	Namespace struct {
 		Name string `yaml:"name"`
-		Type string `yaml:"type"` // The field is a string since it is shared between global config Supported values: fixed|ephemeral.
+		Type string `yaml:"type"` // The field is a string since it is shared between global config Supported values: fixed.
 		// ShardNum is defined for fixed namespace.
 		ShardNum int64 `yaml:"shardNum"`
 	}
@@ -115,16 +114,14 @@ type (
 )
 
 const (
-	NamespaceTypeFixed     = "fixed"
-	NamespaceTypeEphemeral = "ephemeral"
+	NamespaceTypeFixed = "fixed"
 )
 
 // NewConfig returns a new instance of Config
 func NewConfig(dc *dynamicconfig.Collection) *Config {
 	return &Config{
-		LoadBalancingMode:                   dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingMode),
-		MaxEtcdTxnOps:                       dc.GetIntProperty(dynamicproperties.ShardDistributorMaxEtcdTxnOps),
-		EphemeralAssignmentCoalescingWindow: dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorEphemeralAssignmentCoalescingWindow),
+		LoadBalancingMode: dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingMode),
+		MaxEtcdTxnOps:     dc.GetIntProperty(dynamicproperties.ShardDistributorMaxEtcdTxnOps),
 
 		LoadBalancingNaive: LoadBalancingNaiveConfig{
 			MaxDeviation: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingNaiveMaxDeviation),

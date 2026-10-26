@@ -106,10 +106,6 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 		}
 	}
 	if errors.Is(err, store.ErrShardNotFound) {
-		if assigner := ns.Assigner(); assigner != nil {
-			return assigner.GetOrAssign(ctx, request.ShardKey)
-		}
-
 		return nil, &types.ShardNotFoundError{
 			Namespace: request.Namespace,
 			ShardKey:  request.ShardKey,

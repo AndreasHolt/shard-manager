@@ -26,10 +26,6 @@ import (
 )
 
 const (
-	ShardDistributorAssignmentWriteResultSuccess         = "success"
-	ShardDistributorAssignmentWriteResultVersionConflict = "version_conflict"
-	ShardDistributorAssignmentWriteResultError           = "error"
-
 	revisionTag       = "revision"
 	branchTag         = "branch"
 	buildDateTag      = "build_date"
@@ -76,7 +72,6 @@ const (
 	isRetry                   = "is_retry"
 	queryConsistencyLevel     = "query_consistency_level"
 	budgetManagerName         = "budget_manager_name"
-	assignmentWriteResult     = "assignment_write_result"
 
 	// limiter-side tags
 	globalRatelimitKey            = "global_ratelimit_key"
@@ -355,10 +350,6 @@ func NamespaceTag(namespace string) Tag {
 
 func NamespaceTypeTag(namespaceType string) Tag {
 	return metricWithUnknown("namespace_type", namespaceType)
-}
-
-func ShardDistributorAssignmentWriteResultTag(value string) Tag {
-	return metricWithUnknown(assignmentWriteResult, value)
 }
 
 func HandoverTypeTag(handoverType string) Tag {

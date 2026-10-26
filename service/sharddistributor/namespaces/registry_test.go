@@ -20,18 +20,18 @@ func TestNewRegistryValidation(t *testing.T) {
 			name: "valid",
 			cfg: []config.Namespace{
 				{Name: "fixed", Type: config.NamespaceTypeFixed, ShardNum: 4},
-				{Name: "ephemeral", Type: config.NamespaceTypeEphemeral},
+				{Name: "other", Type: config.NamespaceTypeFixed, ShardNum: 2},
 			},
 		},
 		{
 			name:    "empty name",
-			cfg:     []config.Namespace{{Type: config.NamespaceTypeEphemeral}},
+			cfg:     []config.Namespace{{Type: config.NamespaceTypeFixed, ShardNum: 1}},
 			wantErr: `namespace "": name must not be empty`,
 		},
 		{
 			name:    "unknown type",
-			cfg:     []config.Namespace{{Name: "ns", Type: "ephmeral"}},
-			wantErr: `namespace "ns": unknown type "ephmeral"`,
+			cfg:     []config.Namespace{{Name: "ns", Type: "ephemeral"}},
+			wantErr: `namespace "ns": unknown type "ephemeral"`,
 		},
 		{
 			name:    "fixed without shards",
@@ -41,7 +41,7 @@ func TestNewRegistryValidation(t *testing.T) {
 		{
 			name: "duplicate name",
 			cfg: []config.Namespace{
-				{Name: "ns", Type: config.NamespaceTypeEphemeral},
+				{Name: "ns", Type: config.NamespaceTypeFixed, ShardNum: 2},
 				{Name: "ns", Type: config.NamespaceTypeFixed, ShardNum: 1},
 			},
 			wantErr: `namespace "ns": configured more than once`,
@@ -64,8 +64,8 @@ func TestNewRegistryValidation(t *testing.T) {
 
 func TestRegistryGet(t *testing.T) {
 	fixed := config.Namespace{Name: "fixed", Type: config.NamespaceTypeFixed, ShardNum: 4}
-	ephemeral := config.Namespace{Name: "ephemeral", Type: config.NamespaceTypeEphemeral}
-	r := MustNewRegistry(config.ShardDistribution{Namespaces: []config.Namespace{fixed, ephemeral}})
+	other := config.Namespace{Name: "other", Type: config.NamespaceTypeFixed, ShardNum: 2}
+	r := MustNewRegistry(config.ShardDistribution{Namespaces: []config.Namespace{fixed, other}})
 
 	tests := []struct {
 		name    string
@@ -73,7 +73,7 @@ func TestRegistryGet(t *testing.T) {
 		wantNS  config.Namespace
 		wantErr error
 	}{
-		{name: "found", lookup: "ephemeral", wantNS: ephemeral},
+		{name: "found", lookup: "other", wantNS: other},
 		{name: "not found", lookup: "unknown", wantErr: &types.NamespaceNotFoundError{Namespace: "unknown"}},
 	}
 
@@ -87,7 +87,7 @@ func TestRegistryGet(t *testing.T) {
 }
 
 func TestRegistryList(t *testing.T) {
-	b := config.Namespace{Name: "b", Type: config.NamespaceTypeEphemeral}
+	b := config.Namespace{Name: "b", Type: config.NamespaceTypeFixed, ShardNum: 2}
 	a := config.Namespace{Name: "a", Type: config.NamespaceTypeFixed, ShardNum: 1}
 	r := MustNewRegistry(config.ShardDistribution{Namespaces: []config.Namespace{b, a}})
 

@@ -61,9 +61,8 @@ func validate(ns config.Namespace) error {
 		if ns.ShardNum <= 0 {
 			return fmt.Errorf("fixed namespace must have a positive shardNum, got %d", ns.ShardNum)
 		}
-	case config.NamespaceTypeEphemeral:
 	default:
-		return fmt.Errorf("unknown type %q, must be %q or %q", ns.Type, config.NamespaceTypeFixed, config.NamespaceTypeEphemeral)
+		return fmt.Errorf("unknown type %q, must be %q", ns.Type, config.NamespaceTypeFixed)
 	}
 	return nil
 }
