@@ -55,7 +55,7 @@ func New(p Params) *Manager {
 			assigner = ephemeralassigner.New(nsCfg.Name, p.TimeSource, p.Config, p.Store, shardCache, p.MetricsClient)
 		}
 
-		namespaces = append(namespaces, newNamespace(nsCfg, shardCache, assigner))
+		namespaces = append(namespaces, newNamespace(nsCfg, p.Config, shardCache, assigner))
 	}
 
 	m := newManager(p.Logger, namespaces)

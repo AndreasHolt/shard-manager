@@ -22,6 +22,7 @@ func TestNewDynamicConfigCreatesInstanceWithProperties(t *testing.T) {
 	assert.NotNil(t, config.LoadBalancingMode)
 	assert.NotNil(t, config.EphemeralAssignmentCoalescingWindow)
 	assert.Equal(t, 10*time.Millisecond, config.EphemeralAssignmentCoalescingWindow("test-namespace"))
+	assert.Equal(t, 0, config.FixedShardNum("test-namespace"))
 	assert.NotNil(t, config.LoadBalancingNaive.MaxDeviation)
 	assert.NotNil(t, config.LoadBalancingGreedy.PerShardCooldown)
 	assert.NotNil(t, config.LoadBalancingGreedy.LoadSmoothingTimeConstant)
@@ -79,6 +80,62 @@ func TestGetLoadBalancingMode(t *testing.T) {
 
 			mode := config.GetLoadBalancingMode("test-namespace")
 			assert.Equal(t, tt.expectedMode, mode)
+		})
+	}
+}
+
+func TestEffectiveNamespace(t *testing.T) {
+	ephemeralNamespace := Namespace{Name: "ephemeral-namespace", Type: NamespaceTypeEphemeral}
+	fixedNamespace := Namespace{Name: "fixed-namespace", Type: NamespaceTypeFixed, ShardNum: 32}
+
+	tests := []struct {
+		name           string
+		static         Namespace
+		fixedShardNums map[string]int
+		want           Namespace
+	}{
+		{
+			name:           "zero keeps the static config",
+			static:         ephemeralNamespace,
+			fixedShardNums: map[string]int{"ephemeral-namespace": 0},
+			want:           ephemeralNamespace,
+		},
+		{
+			name:           "negative keeps the static config",
+			static:         ephemeralNamespace,
+			fixedShardNums: map[string]int{"ephemeral-namespace": -1},
+			want:           ephemeralNamespace,
+		},
+		{
+			name:           "a value for another namespace keeps the static config",
+			static:         ephemeralNamespace,
+			fixedShardNums: map[string]int{"other-namespace": 16384},
+			want:           ephemeralNamespace,
+		},
+		{
+			name:           "positive makes an ephemeral namespace fixed",
+			static:         ephemeralNamespace,
+			fixedShardNums: map[string]int{"ephemeral-namespace": 16384},
+			want:           Namespace{Name: "ephemeral-namespace", Type: NamespaceTypeFixed, ShardNum: 16384},
+		},
+		{
+			name:           "positive replaces the shard count of a fixed namespace",
+			static:         fixedNamespace,
+			fixedShardNums: map[string]int{"fixed-namespace": 64},
+			want:           Namespace{Name: "fixed-namespace", Type: NamespaceTypeFixed, ShardNum: 64},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				FixedShardNum: func(namespace string) int {
+					return tt.fixedShardNums[namespace]
+				},
+			}
+
+			got := cfg.EffectiveNamespace(tt.static)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

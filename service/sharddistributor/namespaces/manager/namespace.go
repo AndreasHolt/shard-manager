@@ -12,27 +12,33 @@ import (
 // that serve it.
 type Namespace interface {
 	Name() string
+	// Config returns the configuration the namespace runs with: the static
+	// configuration with dynamic config applied by config.Config.EffectiveNamespace.
 	Config() config.Namespace
 	Cache() cache.ShardCache
-	// Assigner returns the ephemeral shard assigner, or nil if the namespace is not ephemeral.
+	// Assigner returns the ephemeral shard assigner, or nil if the namespace is
+	// fixed in the static configuration. It is never nil while Config is ephemeral.
 	Assigner() *ephemeralassigner.Assigner
 }
 
 type namespace struct {
-	config   config.Namespace
-	cache    cache.ShardCache
-	assigner *ephemeralassigner.Assigner
+	staticConfig  config.Namespace
+	dynamicConfig *config.Config
+	cache         cache.ShardCache
+	assigner      *ephemeralassigner.Assigner
 }
 
 var _ Namespace = (*namespace)(nil)
 
 // newNamespace bundles the components of one namespace. assigner is nil for
-// namespaces that are not ephemeral.
-func newNamespace(cfg config.Namespace, shardCache cache.ShardCache, assigner *ephemeralassigner.Assigner) *namespace {
-	return &namespace{config: cfg, cache: shardCache, assigner: assigner}
+// namespaces that are fixed in the static configuration.
+func newNamespace(staticConfig config.Namespace, dynamicConfig *config.Config, shardCache cache.ShardCache, assigner *ephemeralassigner.Assigner) *namespace {
+	return &namespace{staticConfig: staticConfig, dynamicConfig: dynamicConfig, cache: shardCache, assigner: assigner}
 }
 
-func (n *namespace) Name() string                          { return n.config.Name }
-func (n *namespace) Config() config.Namespace              { return n.config }
+func (n *namespace) Name() string { return n.staticConfig.Name }
+func (n *namespace) Config() config.Namespace {
+	return n.dynamicConfig.EffectiveNamespace(n.staticConfig)
+}
 func (n *namespace) Cache() cache.ShardCache               { return n.cache }
 func (n *namespace) Assigner() *ephemeralassigner.Assigner { return n.assigner }

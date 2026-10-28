@@ -334,6 +334,15 @@ const (
 	// Allowed filters: N/A
 	ShardDistributorMaxEtcdTxnOps
 
+	// ShardDistributorFixedShardNum makes a namespace fixed with this many shards.
+	// A positive value overrides the namespace's type and shardNum from the static config.
+	// Zero or a negative value keeps the static config.
+	// KeyName: shardDistributor.fixedShardNum
+	// Value type: Int
+	// Default value: 0
+	// Allowed filters: namespace
+	ShardDistributorFixedShardNum
+
 	// LastIntKey must be the last one in this const group
 	LastIntKey
 )
@@ -527,6 +536,12 @@ var IntKeys = map[IntKey]DynamicInt{
 		KeyName:      "shardDistributor.maxEtcdTxnOps",
 		Description:  "ShardDistributorMaxEtcdTxnOps is the maximum number of operations per etcd transaction, must not exceed the etcd cluster's configured --max-txn-ops limit",
 		DefaultValue: 128,
+	},
+	ShardDistributorFixedShardNum: {
+		KeyName:      "shardDistributor.fixedShardNum",
+		Filters:      []Filter{Namespace},
+		Description:  "ShardDistributorFixedShardNum makes a namespace fixed with this many shards. A positive value overrides the namespace's type and shardNum from the static config, zero or a negative value keeps the static config",
+		DefaultValue: 0,
 	},
 }
 
