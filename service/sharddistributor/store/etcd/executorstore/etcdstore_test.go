@@ -432,9 +432,9 @@ func TestGetStateRecordsETCDRoundTripLatencyOnError(t *testing.T) {
 	assert.Equal(t, int64(1), bucketCounts[roundTripTime])
 }
 
-// Time can only advance during the etcd commit, so a decode sample in the zero bucket
-// shows the decode timer starts after the round trip instead of overlapping it.
-func TestNamespaceReadsRecordDecodeLatencyExcludingETCDRoundTrip(t *testing.T) {
+// Time can only advance during the etcd commit, so a parse sample in the zero bucket
+// shows the parse timer starts after the round trip instead of overlapping it.
+func TestNamespaceReadsRecordParseLatencyExcludingETCDRoundTrip(t *testing.T) {
 	tests := []struct {
 		name      string
 		operation string
@@ -461,7 +461,7 @@ func TestNamespaceReadsRecordDecodeLatencyExcludingETCDRoundTrip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			namespace := "test_namespace"
-			histogramName := "test.shard_distributor_store_decode_latency+namespace=test_namespace,operation=" + tt.operation
+			histogramName := "test.shard_distributor_store_parse_latency+namespace=test_namespace,operation=" + tt.operation
 			roundTripTime := 50 * time.Millisecond
 			ctrl := gomock.NewController(t)
 			mockClient := etcdclient.NewMockClient(ctrl)
@@ -490,8 +490,8 @@ func TestNamespaceReadsRecordDecodeLatencyExcludingETCDRoundTrip(t *testing.T) {
 			histograms := testScope.Snapshot().Histograms()
 			require.Contains(t, histograms, histogramName)
 			bucketCounts := histograms[histogramName].Durations()
-			assert.Equal(t, int64(1), bucketCounts[0], "decode latency should be recorded once, without the etcd round trip")
-			assert.Zero(t, bucketCounts[roundTripTime], "decode latency should not include the etcd round trip")
+			assert.Equal(t, int64(1), bucketCounts[0], "parse latency should be recorded once, without the etcd round trip")
+			assert.Zero(t, bucketCounts[roundTripTime], "parse latency should not include the etcd round trip")
 		})
 	}
 }

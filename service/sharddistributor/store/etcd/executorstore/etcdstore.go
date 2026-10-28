@@ -231,9 +231,9 @@ func (s *executorStoreImpl) GetState(ctx context.Context, namespace string) (*st
 		return nil, fmt.Errorf("get namespace state: expected 3 responses, got %d", len(txnResp.Responses))
 	}
 
-	decodeStart := s.timeSource.Now()
+	parseStart := s.timeSource.Now()
 	parsedData, err := common.ParseExecutorKVs(s.prefix, namespace, txnResp.Responses[0].GetResponseRange().Kvs)
-	metricsScope.RecordHistogramDuration(metrics.ShardDistributorStoreDecodeLatency, s.timeSource.Since(decodeStart))
+	metricsScope.RecordHistogramDuration(metrics.ShardDistributorStoreParseLatency, s.timeSource.Since(parseStart))
 	if err != nil {
 		return nil, err
 	}
@@ -294,9 +294,9 @@ func (s *executorStoreImpl) GetAssignmentState(ctx context.Context, namespace st
 		return nil, fmt.Errorf("get namespace assignment state: expected 2 responses, got %d", len(txnResp.Responses))
 	}
 
-	decodeStart := s.timeSource.Now()
+	parseStart := s.timeSource.Now()
 	metadata, assignments, err := common.ParseExecutorAssignmentKVs(s.prefix, namespace, txnResp.Responses[0].GetResponseRange().Kvs)
-	metricsScope.RecordHistogramDuration(metrics.ShardDistributorStoreDecodeLatency, s.timeSource.Since(decodeStart))
+	metricsScope.RecordHistogramDuration(metrics.ShardDistributorStoreParseLatency, s.timeSource.Since(parseStart))
 	if err != nil {
 		return nil, err
 	}
