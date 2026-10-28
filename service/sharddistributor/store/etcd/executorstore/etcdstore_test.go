@@ -432,6 +432,84 @@ func TestGetStateRecordsETCDRoundTripLatencyOnError(t *testing.T) {
 	assert.Equal(t, int64(1), bucketCounts[roundTripTime])
 }
 
+// Time can only advance during the etcd commit, so a decode sample in the zero bucket
+// shows the decode timer starts after the round trip instead of overlapping it.
+func TestNamespaceReadsRecordDecodeLatencyExcludingETCDRoundTrip(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation string
+		read      func(executorStore *executorStoreImpl, namespace string) error
+	}{
+		{
+			name:      "GetState",
+			operation: "StoreGetState",
+			read: func(executorStore *executorStoreImpl, namespace string) error {
+				_, err := executorStore.GetState(context.Background(), namespace)
+				return err
+			},
+		},
+		{
+			name:      "GetAssignmentState",
+			operation: "StoreGetAssignmentState",
+			read: func(executorStore *executorStoreImpl, namespace string) error {
+				_, err := executorStore.GetAssignmentState(context.Background(), namespace)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespace := "test_namespace"
+			histogramName := "test.shard_distributor_store_decode_latency+namespace=test_namespace,operation=" + tt.operation
+			roundTripTime := 50 * time.Millisecond
+			ctrl := gomock.NewController(t)
+			mockClient := etcdclient.NewMockClient(ctrl)
+			timeSource := clock.NewMockedTimeSource()
+			testScope := tally.NewTestScope("test", nil)
+			metricsClient := metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
+
+			txn := &trackingTxn{
+				commitFn: func(numOps int) (*clientv3.TxnResponse, error) {
+					timeSource.Advance(roundTripTime)
+					return emptyRangeTxnResponse(numOps), nil
+				},
+			}
+			mockClient.EXPECT().Txn(gomock.Any()).Return(txn)
+
+			executorStore := &executorStoreImpl{
+				client:        mockClient,
+				prefix:        "test-prefix",
+				timeSource:    timeSource,
+				metricsClient: metricsClient,
+			}
+
+			err := tt.read(executorStore, namespace)
+			require.NoError(t, err)
+
+			histograms := testScope.Snapshot().Histograms()
+			require.Contains(t, histograms, histogramName)
+			bucketCounts := histograms[histogramName].Durations()
+			assert.Equal(t, int64(1), bucketCounts[0], "decode latency should be recorded once, without the etcd round trip")
+			assert.Zero(t, bucketCounts[roundTripTime], "decode latency should not include the etcd round trip")
+		})
+	}
+}
+
+// emptyRangeTxnResponse answers a transaction of numOps range reads that all found nothing.
+func emptyRangeTxnResponse(numOps int) *clientv3.TxnResponse {
+	responses := make([]*etcdserverpb.ResponseOp, 0, numOps)
+	for range numOps {
+		responses = append(responses, &etcdserverpb.ResponseOp{
+			Response: &etcdserverpb.ResponseOp_ResponseRange{ResponseRange: &etcdserverpb.RangeResponse{}},
+		})
+	}
+	return &clientv3.TxnResponse{
+		Header:    &etcdserverpb.ResponseHeader{},
+		Responses: responses,
+	}
+}
+
 // TestAssignShards_WithRevisions tests the optimistic locking logic of AssignShards.
 func TestAssignShards_WithRevisions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
