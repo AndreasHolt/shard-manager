@@ -494,7 +494,6 @@ func TestNamespaceReadsRecordParseLatency(t *testing.T) {
 	}
 }
 
-// emptyTxnResponse answers a transaction of numOps range reads that all found nothing.
 func emptyTxnResponse(numOps int) *clientv3.TxnResponse {
 	responses := make([]*etcdserverpb.ResponseOp, 0, numOps)
 	for range numOps {
