@@ -138,9 +138,9 @@ func TestRebalanceShards_InitialDistribution(t *testing.T) {
 
 func TestRebalanceShards_FixedShardNumMakesEphemeralNamespaceFixed(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
-	fixedShardNum := 2
+	fixedShardNums := map[string]int{mocks.cfg.Name: 2}
 	mocks.sdConfig.FixedShardNum = func(namespace string) int {
-		return fixedShardNum
+		return fixedShardNums[namespace]
 	}
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 

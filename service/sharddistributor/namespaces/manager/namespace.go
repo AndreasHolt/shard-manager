@@ -3,6 +3,7 @@ package manager
 //go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination=namespace_mock.go Namespace
 
 import (
+	"github.com/cadence-workflow/shard-manager/common/dynamicconfig/dynamicproperties"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/cache"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/config"
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/ephemeralassigner"
@@ -13,7 +14,7 @@ import (
 type Namespace interface {
 	Name() string
 	// Config returns the configuration the namespace runs with: the static
-	// configuration with dynamic config applied by config.Config.EffectiveNamespace.
+	// configuration with dynamic config applied by config.EffectiveNamespace.
 	Config() config.Namespace
 	Cache() cache.ShardCache
 	// Assigner returns the ephemeral shard assigner, or nil if the namespace is
@@ -23,7 +24,7 @@ type Namespace interface {
 
 type namespace struct {
 	staticConfig  config.Namespace
-	dynamicConfig *config.Config
+	fixedShardNum dynamicproperties.IntPropertyFnWithNamespaceFilters
 	cache         cache.ShardCache
 	assigner      *ephemeralassigner.Assigner
 }
@@ -32,13 +33,14 @@ var _ Namespace = (*namespace)(nil)
 
 // newNamespace bundles the components of one namespace. assigner is nil for
 // namespaces that are fixed in the static configuration.
-func newNamespace(staticConfig config.Namespace, dynamicConfig *config.Config, shardCache cache.ShardCache, assigner *ephemeralassigner.Assigner) *namespace {
-	return &namespace{staticConfig: staticConfig, dynamicConfig: dynamicConfig, cache: shardCache, assigner: assigner}
+func newNamespace(staticConfig config.Namespace, fixedShardNum dynamicproperties.IntPropertyFnWithNamespaceFilters, shardCache cache.ShardCache, assigner *ephemeralassigner.Assigner) *namespace {
+	return &namespace{staticConfig: staticConfig, fixedShardNum: fixedShardNum, cache: shardCache, assigner: assigner}
 }
 
 func (n *namespace) Name() string { return n.staticConfig.Name }
 func (n *namespace) Config() config.Namespace {
-	return n.dynamicConfig.EffectiveNamespace(n.staticConfig)
+	fixedShardNum := n.fixedShardNum(n.staticConfig.Name)
+	return config.EffectiveNamespace(n.staticConfig, fixedShardNum)
 }
 func (n *namespace) Cache() cache.ShardCache               { return n.cache }
 func (n *namespace) Assigner() *ephemeralassigner.Assigner { return n.assigner }

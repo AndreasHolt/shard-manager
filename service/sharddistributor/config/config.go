@@ -166,11 +166,9 @@ func (c *Config) GetLoadBalancingMode(namespace string) types.LoadBalancingMode 
 	return mode
 }
 
-// EffectiveNamespace returns the configuration ns runs with. A positive FixedShardNum
-// for the namespace makes it fixed with that many shards, otherwise ns is returned
-// unchanged.
-func (c *Config) EffectiveNamespace(ns Namespace) Namespace {
-	fixedShardNum := c.FixedShardNum(ns.Name)
+// EffectiveNamespace returns the configuration ns runs with. A positive fixedShardNum
+// makes it fixed with that many shards, otherwise ns is returned unchanged.
+func EffectiveNamespace(ns Namespace, fixedShardNum int) Namespace {
 	if fixedShardNum <= 0 {
 		return ns
 	}

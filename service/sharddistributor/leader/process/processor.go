@@ -389,7 +389,8 @@ func (p *namespaceProcessor) identifyStaleShardStats(namespaceState *store.Names
 
 // rebalanceShards is the core logic for distributing shards among active executors.
 func (p *namespaceProcessor) rebalanceShards(ctx context.Context) (err error) {
-	namespaceCfg := p.sdConfig.EffectiveNamespace(p.namespaceCfg)
+	fixedShardNum := p.sdConfig.FixedShardNum(p.namespaceCfg.Name)
+	namespaceCfg := config.EffectiveNamespace(p.namespaceCfg, fixedShardNum)
 	metricsLoopScope := p.metricsClient.Scope(
 		metrics.ShardDistributorAssignLoopScope,
 		metrics.NamespaceTag(namespaceCfg.Name),

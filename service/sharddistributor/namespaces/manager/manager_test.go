@@ -145,10 +145,11 @@ func TestStartStop(t *testing.T) {
 			cacheA, cacheB, cacheC := cache.NewMockShardCache(ctrl), cache.NewMockShardCache(ctrl), cache.NewMockShardCache(ctrl)
 			tt.expect(cacheA, cacheB, cacheC)
 			logger, logs := testlogger.NewObserved(t)
+			noFixedShardNum := func(string) int { return 0 }
 			m := newManager(logger, []Namespace{
-				newNamespace(config.Namespace{Name: "a"}, nil, cacheA, nil),
-				newNamespace(config.Namespace{Name: "b"}, nil, cacheB, nil),
-				newNamespace(config.Namespace{Name: "c"}, nil, cacheC, nil),
+				newNamespace(config.Namespace{Name: "a"}, noFixedShardNum, cacheA, nil),
+				newNamespace(config.Namespace{Name: "b"}, noFixedShardNum, cacheB, nil),
+				newNamespace(config.Namespace{Name: "c"}, noFixedShardNum, cacheC, nil),
 			})
 
 			if err := m.Start(); tt.wantErr != "" {
