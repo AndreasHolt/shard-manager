@@ -337,6 +337,8 @@ const (
 	// ShardDistributorFixedShardNum makes a namespace fixed with this many shards.
 	// A positive value overrides the namespace's type and shardNum from the static config.
 	// Zero or a negative value keeps the static config.
+	// Only change it while the namespace has no heartbeating executors. The leader then deletes the
+	// stale executors with their assignments, so no shards from the previous type are left behind.
 	// KeyName: shardDistributor.fixedShardNum
 	// Value type: Int
 	// Default value: 0
@@ -540,7 +542,7 @@ var IntKeys = map[IntKey]DynamicInt{
 	ShardDistributorFixedShardNum: {
 		KeyName:      "shardDistributor.fixedShardNum",
 		Filters:      []Filter{Namespace},
-		Description:  "ShardDistributorFixedShardNum makes a namespace fixed with this many shards. A positive value overrides the namespace's type and shardNum from the static config, zero or a negative value keeps the static config",
+		Description:  "ShardDistributorFixedShardNum makes a namespace fixed with this many shards. A positive value overrides the namespace's type and shardNum from the static config, zero or a negative value keeps the static config. Only change it while the namespace has no heartbeating executors",
 		DefaultValue: 0,
 	},
 }
