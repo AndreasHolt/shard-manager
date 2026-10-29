@@ -468,6 +468,7 @@ func TestNamespaceReadsRecordParseLatency(t *testing.T) {
 
 			txn := &trackingTxn{
 				commitFn: func(numOps int) (*clientv3.TxnResponse, error) {
+					timeSource.Advance(50 * time.Millisecond)
 					return emptyTxnResponse(numOps), nil
 				},
 			}
@@ -485,11 +486,8 @@ func TestNamespaceReadsRecordParseLatency(t *testing.T) {
 
 			histograms := testScope.Snapshot().Histograms()
 			require.Contains(t, histograms, histogramName)
-			var sampleCount int64
-			for _, bucketCount := range histograms[histogramName].Durations() {
-				sampleCount += bucketCount
-			}
-			assert.Equal(t, int64(1), sampleCount, "each read should record one parse latency sample")
+			durations := histograms[histogramName].Durations()
+			assert.Equal(t, int64(1), durations[0], "parse latency should exclude the etcd round trip")
 		})
 	}
 }
