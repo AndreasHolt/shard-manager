@@ -114,12 +114,17 @@ func (e *ExecutorValueEncoder) encodeJSON(value any) ([]byte, error) {
 	return e.compress(data)
 }
 
-func (e *ExecutorValueEncoder) encodeProtobuf(value proto.Message) ([]byte, error) {
-	data, err := proto.Marshal(value)
-	if err != nil {
+type storedValue interface {
+	Size() int
+	MarshalToSizedBuffer([]byte) (int, error)
+}
+
+func (e *ExecutorValueEncoder) encodeProtobuf(value storedValue) ([]byte, error) {
+	markedData := make([]byte, 1+value.Size())
+	markedData[0] = _protobufMarker
+	if _, err := value.MarshalToSizedBuffer(markedData[1:]); err != nil {
 		return nil, fmt.Errorf("marshal protobuf: %w", err)
 	}
-	markedData := append([]byte{_protobufMarker}, data...)
 	return e.compress(markedData)
 }
 
