@@ -8,7 +8,7 @@ import (
 	"github.com/cadence-workflow/shard-manager/service/sharddistributor/store"
 )
 
-// ShardCache answers shard and executor lookups of one namespace from a cached
+// ShardCache answers shard lookups of one namespace from a cached
 // view, which it keeps current in the background from a Store. Lookups that miss the
 // cache trigger a refresh, so a caller never misses a shard purely because the cache
 // is cold.
@@ -24,9 +24,6 @@ type ShardCache interface {
 	// It returns store.ErrShardNotFound if the shard does not exist, and store.ErrShardDrained
 	// if the shard is drained.
 	GetShardOwner(ctx context.Context, shardID string) (*store.ShardOwner, error)
-
-	// GetExecutor retrieves an executor.
-	GetExecutor(ctx context.Context, executorID string) (*store.ShardOwner, error)
 
 	// GetShardAssignments returns a snapshot of assignments and drained shards.
 	GetShardAssignments() store.AssignmentSnapshot
