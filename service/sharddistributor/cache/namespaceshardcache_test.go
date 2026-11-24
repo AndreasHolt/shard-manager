@@ -290,14 +290,13 @@ func TestShardCache_replaceNamespaceState_skipsStaleRevision(t *testing.T) {
 
 // seedState applies a revision in which one executor owns one shard and that shard is
 // drained, which is the shape every caller here needs; replaceNamespaceState itself takes
-// five parallel maps.
+// four parallel maps.
 func seedState(c *shardCache, revision int64, executorID, shardID string) {
 	owner := &store.ShardOwner{ExecutorID: executorID, Metadata: map[string]string{}}
 	c.replaceNamespaceState(revision, revision,
 		map[string]*store.ShardOwner{shardID: owner},
 		map[*store.ShardOwner][]string{owner: {shardID}},
 		map[string]int64{executorID: revision},
-		map[string]*store.ShardOwner{executorID: owner},
 		map[string]struct{}{shardID: {}},
 	)
 }
@@ -439,14 +438,6 @@ func verifyShardOwner(t *testing.T, c *shardCache, shardID, expectedExecutorID s
 	assert.Equal(t, expectedExecutorID, owner.ExecutorID)
 	for key, expectedValue := range expectedMetadata {
 		assert.Equal(t, expectedValue, owner.Metadata[key])
-	}
-
-	executor, err := c.GetExecutor(context.Background(), expectedExecutorID)
-	require.NoError(t, err)
-	require.NotNil(t, executor)
-	assert.Equal(t, expectedExecutorID, executor.ExecutorID)
-	for key, expectedValue := range expectedMetadata {
-		assert.Equal(t, expectedValue, executor.Metadata[key])
 	}
 }
 

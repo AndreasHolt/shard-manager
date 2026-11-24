@@ -41,7 +41,6 @@ type shardCache struct {
 	sync.RWMutex
 
 	shardToExecutor  map[string]*store.ShardOwner   // shardID -> shardOwner
-	shardOwners      map[string]*store.ShardOwner   // executorID -> shardOwner
 	executorToShards map[*store.ShardOwner][]string // executor -> shardIDs
 	executorRevision map[string]int64
 	drainedShards    map[string]struct{} // set of shard IDs marked drained
@@ -76,7 +75,6 @@ func newShardCache(namespace string, executorStore store.Store, logger log.Logge
 		shardToExecutor:  make(map[string]*store.ShardOwner),
 		executorToShards: make(map[*store.ShardOwner][]string),
 		executorRevision: make(map[string]int64),
-		shardOwners:      make(map[string]*store.ShardOwner),
 		drainedShards:    make(map[string]struct{}),
 		namespace:        namespace,
 		stopCh:           make(chan struct{}),
@@ -152,18 +150,6 @@ func (c *shardCache) lookupDrained(shardID string) (drained, loaded bool) {
 
 	_, drained = c.drainedShards[shardID]
 	return drained, c.lastRevision > 0
-}
-
-func (c *shardCache) GetExecutor(ctx context.Context, executorID string) (*store.ShardOwner, error) {
-	shardOwner, err := c.getShardOwnerInMap(ctx, &c.shardOwners, executorID)
-	if err != nil {
-		return nil, fmt.Errorf("get shard owner in map: %w", err)
-	}
-	if shardOwner != nil {
-		return shardOwner, nil
-	}
-
-	return nil, store.ErrExecutorNotFound
 }
 
 func (c *shardCache) Subscribe() (<-chan struct{}, func()) {
@@ -294,10 +280,13 @@ func (c *shardCache) applyNamespaceState(state *store.AssignmentState) bool {
 	shardToExecutor := make(map[string]*store.ShardOwner)
 	executorState := make(map[*store.ShardOwner][]string)
 	executorRevision := make(map[string]int64)
-	shardOwners := make(map[string]*store.ShardOwner)
 
 	for executorID, executorMetadata := range state.ExecutorMetadata {
-		shardOwner := getOrCreateShardOwner(shardOwners, executorID)
+		shardOwner := &store.ShardOwner{
+			ExecutorID: executorID,
+			Metadata:   make(map[string]string, len(executorMetadata)),
+		}
+		maps.Copy(shardOwner.Metadata, executorMetadata)
 
 		if assigned, ok := state.ShardAssignments[executorID]; ok {
 			shardIDs := make([]string, 0, len(assigned.AssignedShards))
@@ -308,11 +297,9 @@ func (c *shardCache) applyNamespaceState(state *store.AssignmentState) bool {
 			executorState[shardOwner] = shardIDs
 			executorRevision[executorID] = assigned.ModRevision
 		}
-
-		maps.Copy(shardOwner.Metadata, executorMetadata)
 	}
 
-	return c.replaceNamespaceState(state.Revision, state.AssignmentRevision, shardToExecutor, executorState, executorRevision, shardOwners, state.DrainedShards)
+	return c.replaceNamespaceState(state.Revision, state.AssignmentRevision, shardToExecutor, executorState, executorRevision, state.DrainedShards)
 }
 
 func (c *shardCache) replaceNamespaceState(
@@ -321,7 +308,6 @@ func (c *shardCache) replaceNamespaceState(
 	shardToExecutor map[string]*store.ShardOwner,
 	executorState map[*store.ShardOwner][]string,
 	executorRevision map[string]int64,
-	shardOwners map[string]*store.ShardOwner,
 	drainedShards map[string]struct{},
 ) bool {
 	c.Lock()
@@ -340,22 +326,8 @@ func (c *shardCache) replaceNamespaceState(
 	c.shardToExecutor = shardToExecutor
 	c.executorToShards = executorState
 	c.executorRevision = executorRevision
-	c.shardOwners = shardOwners
 	c.drainedShards = drainedShards
 	return true
-}
-
-// getOrCreateShardOwner retrieves an existing ShardOwner from the map or creates a new one if it doesn't exist
-func getOrCreateShardOwner(shardOwners map[string]*store.ShardOwner, executorID string) *store.ShardOwner {
-	shardOwner, ok := shardOwners[executorID]
-	if !ok {
-		shardOwner = &store.ShardOwner{
-			ExecutorID: executorID,
-			Metadata:   make(map[string]string),
-		}
-		shardOwners[executorID] = shardOwner
-	}
-	return shardOwner
 }
 
 // getShardOwnerInMap retrieves a shard owner from the map if it exists, otherwise it refreshes the cache and tries again

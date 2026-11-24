@@ -42,21 +42,6 @@ func (m *MockShardCache) EXPECT() *MockShardCacheMockRecorder {
 	return m.recorder
 }
 
-// GetExecutor mocks base method.
-func (m *MockShardCache) GetExecutor(ctx context.Context, executorID string) (*store.ShardOwner, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetExecutor", ctx, executorID)
-	ret0, _ := ret[0].(*store.ShardOwner)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetExecutor indicates an expected call of GetExecutor.
-func (mr *MockShardCacheMockRecorder) GetExecutor(ctx, executorID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetExecutor", reflect.TypeOf((*MockShardCache)(nil).GetExecutor), ctx, executorID)
-}
-
 // GetShardAssignments mocks base method.
 func (m *MockShardCache) GetShardAssignments() store.AssignmentSnapshot {
 	m.ctrl.T.Helper()

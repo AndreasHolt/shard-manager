@@ -39,7 +39,7 @@ func (e Executor) Hostname() string {
 	return e.Heartbeat.Hostname()
 }
 
-func (e Executor) IsAssignable(staleExecutors map[string]int64) bool {
+func (e Executor) IsAssignable(staleExecutors map[string]struct{}) bool {
 	if e.Status() != types.ExecutorStatusACTIVE || e.HostDrained {
 		return false
 	}
@@ -136,10 +136,6 @@ type DrainedHost struct {
 	Reason    string    `json:"reason,omitempty"`
 }
 
-type ShardState struct {
-	ExecutorID string
-}
-
 type ShardStatistics struct {
 	// Exponential weighted moving average of shard load that persists across executor changes
 	SmoothedLoad float64
@@ -210,7 +206,7 @@ func (ns *NamespaceState) Executor(executorID string) (Executor, bool) {
 }
 
 // AssignableExecutorIDs returns the IDs of the executors that may hold shards
-func (ns *NamespaceState) AssignableExecutorIDs(staleExecutors map[string]int64) []string {
+func (ns *NamespaceState) AssignableExecutorIDs(staleExecutors map[string]struct{}) []string {
 	var ids []string
 	for executorID, heartbeat := range ns.Executors {
 		if ns.newExecutor(executorID, heartbeat).IsAssignable(staleExecutors) {
