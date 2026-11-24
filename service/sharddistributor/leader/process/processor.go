@@ -325,6 +325,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, namespaceC
 		return fmt.Errorf("get state: %w", err)
 	}
 	p.emitActiveShardMetric(namespaceState.ShardAssignments, metricsLoopScope)
+	p.emitMaxOwnersPerShardMetric(namespaceState.ShardAssignments, metricsLoopScope)
 	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 	metricsLoopScope.UpdateGauge(metrics.ShardDistributorDrainedHosts, float64(len(namespaceState.DrainedHosts)))
 
@@ -432,7 +433,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, namespaceC
 		}
 	}
 
-	p.emitMaxOwnersPerShardMetric(newAssignments, metricsLoopScope)
 	return nil
 }
 
