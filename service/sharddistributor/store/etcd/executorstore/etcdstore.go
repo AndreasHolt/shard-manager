@@ -477,7 +477,9 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 		ops = append(ops, clientv3.OpDelete(executorIDPrefix, clientv3.WithPrefix()))
 	}
 
-	for executorID, assignedState := range request.ShardAssignments {
+	// Sorted so a request that is split over several transactions always splits the same way.
+	for _, executorID := range slices.Sorted(maps.Keys(request.ShardAssignments)) {
+		assignedState := request.ShardAssignments[executorID]
 		encodedState, err := s.encoder.EncodeAssignedState(&assignedState)
 		if err != nil {
 			return fmt.Errorf("encode assigned shards for executor %s: %w", executorID, err)
