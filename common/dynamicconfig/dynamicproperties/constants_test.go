@@ -79,6 +79,12 @@ func TestShardDistributorKeys(t *testing.T) {
 			defaultValue: 128,
 		},
 		{
+			name:         "write executor values as protobuf",
+			key:          ShardDistributorWriteExecutorValuesAsProtobuf,
+			keyName:      "shardDistributor.writeExecutorValuesAsProtobuf",
+			defaultValue: true,
+		},
+		{
 			name:         "load balancing mode",
 			key:          ShardDistributorLoadBalancingMode,
 			keyName:      "shardDistributor.loadBalancingMode",
@@ -96,13 +102,6 @@ func TestShardDistributorKeys(t *testing.T) {
 			key:          ShardDistributorLoadBalancingGreedyPerShardCooldown,
 			keyName:      "shardDistributor.loadBalancingGreedy.perShardCooldown",
 			defaultValue: time.Minute,
-			filters:      []Filter{Namespace},
-		},
-		{
-			name:         "ephemeral assignment coalescing window",
-			key:          ShardDistributorEphemeralAssignmentCoalescingWindow,
-			keyName:      "shardDistributor.ephemeralAssignment.coalescingWindow",
-			defaultValue: 10 * time.Millisecond,
 			filters:      []Filter{Namespace},
 		},
 	}

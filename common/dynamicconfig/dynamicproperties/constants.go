@@ -314,11 +314,11 @@ const (
 	// Allowed filters: N/A
 	ShardDistributorMaxEtcdTxnOps
 
-	// ShardDistributorFixedShardNum makes a namespace fixed with this many shards.
-	// A positive value overrides the namespace's type and shardNum from the static config.
+	// ShardDistributorFixedShardNum overrides the number of shards of a namespace.
+	// A positive value overrides the namespace's shardNum from the static config.
 	// Zero or a negative value keeps the static config.
 	// Only change it while the namespace has no heartbeating executors. The leader then deletes the
-	// stale executors with their assignments, so no shards from the previous type are left behind.
+	// stale executors with their assignments, so no shards from the previous shard count are left behind.
 	// KeyName: shardDistributor.fixedShardNum
 	// Value type: Int
 	// Default value: 0
@@ -339,6 +339,14 @@ const (
 	TestGetBoolPropertyFilteredByDomainKey
 	TestGetBoolPropertyFilteredByDomainIDAndWorkflowIDKey
 	TestGetBoolPropertyFilteredByShardIDKey
+
+	// ShardDistributorWriteExecutorValuesAsProtobuf makes the executor store write executor values
+	// as protobuf. Setting it to false writes them as JSON instead. Reads accept both encodings.
+	// KeyName: shardDistributor.writeExecutorValuesAsProtobuf
+	// Value type: Bool
+	// Default value: true
+	// Allowed filters: N/A
+	ShardDistributorWriteExecutorValuesAsProtobuf
 
 	// LastBoolKey must be the last one in this const group
 	LastBoolKey
@@ -463,14 +471,6 @@ const (
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingGreedyLoadSmoothingTimeConstant
 
-	// ShardDistributorEphemeralAssignmentCoalescingWindow is how long the shard
-	// distributor collects initial-assignment requests before processing a batch.
-	// KeyName: shardDistributor.ephemeralAssignment.coalescingWindow
-	// Value type: Duration
-	// Default value: 10 milliseconds
-	// Allowed filters: namespace
-	ShardDistributorEphemeralAssignmentCoalescingWindow
-
 	// LastDurationKey must be the last one in this const group
 	LastDurationKey
 )
@@ -522,7 +522,7 @@ var IntKeys = map[IntKey]DynamicInt{
 	ShardDistributorFixedShardNum: {
 		KeyName:      "shardDistributor.fixedShardNum",
 		Filters:      []Filter{Namespace},
-		Description:  "ShardDistributorFixedShardNum makes a namespace fixed with this many shards. A positive value overrides the namespace's type and shardNum from the static config, zero or a negative value keeps the static config. Only change it while the namespace has no heartbeating executors",
+		Description:  "ShardDistributorFixedShardNum overrides the number of shards of a namespace. A positive value overrides the namespace's shardNum from the static config, zero or a negative value keeps the static config. Only change it while the namespace has no heartbeating executors",
 		DefaultValue: 0,
 	},
 }
@@ -560,6 +560,11 @@ var BoolKeys = map[BoolKey]DynamicBool{
 		Description:  "",
 		DefaultValue: false,
 		Filters:      []Filter{ShardID},
+	},
+	ShardDistributorWriteExecutorValuesAsProtobuf: {
+		KeyName:      "shardDistributor.writeExecutorValuesAsProtobuf",
+		Description:  "ShardDistributorWriteExecutorValuesAsProtobuf makes the executor store write executor values as protobuf. Setting it to false writes them as JSON instead. Reads accept both encodings",
+		DefaultValue: true,
 	},
 }
 
@@ -675,12 +680,6 @@ var DurationKeys = map[DurationKey]DynamicDuration{
 		Filters:      []Filter{Namespace},
 		Description:  "ShardDistributorLoadBalancingGreedyLoadSmoothingTimeConstant is the time constant for exponential smoothing of shard load in greedy load balancing mode",
 		DefaultValue: time.Minute,
-	},
-	ShardDistributorEphemeralAssignmentCoalescingWindow: {
-		KeyName:      "shardDistributor.ephemeralAssignment.coalescingWindow",
-		Filters:      []Filter{Namespace},
-		Description:  "ShardDistributorEphemeralAssignmentCoalescingWindow is how long the shard distributor collects initial-assignment requests before processing a batch",
-		DefaultValue: 10 * time.Millisecond,
 	},
 }
 
