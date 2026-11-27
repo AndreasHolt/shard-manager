@@ -38,6 +38,8 @@ type testDependencies struct {
 	cfg          config.Namespace
 	sdConfig     *config.Config
 	observedLogs *observer.ObservedLogs
+
+	maxAssignShardsExecutors int
 }
 
 func setupProcessorTest(t *testing.T) *testDependencies {
@@ -49,7 +51,12 @@ func setupProcessorTest(t *testing.T) *testDependencies {
 		election:   store.NewMockElection(ctrl),
 		timeSource: mockedClock,
 		cfg:        config.Namespace{Name: "test-ns", ShardNum: 2, Type: config.NamespaceTypeFixed},
+
+		maxAssignShardsExecutors: 100,
 	}
+	deps.store.EXPECT().MaxAssignShardsExecutors().DoAndReturn(func() int {
+		return deps.maxAssignShardsExecutors
+	}).AnyTimes()
 	deps.sdConfig = &config.Config{
 		LoadBalancingMode: func(namespace string) string {
 			return config.LoadBalancingModeNAIVE
@@ -314,6 +321,47 @@ func TestRebalanceShards_ExecutorStale(t *testing.T) {
 
 	err := processor.rebalanceShards(context.Background())
 	require.NoError(t, err)
+}
+
+func TestRebalanceShards_DefersChangesOverStoreLimit(t *testing.T) {
+	mocks := setupProcessorTest(t)
+	mocks.maxAssignShardsExecutors = 2
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	testScope := tally.NewTestScope("test", nil)
+	processor.metricsClient = metrics.NewClient(testScope, metrics.ShardDistributor, metrics.MigrationConfig{})
+
+	now := mocks.timeSource.Now()
+	heartbeats := map[string]store.HeartbeatState{
+		"exec-1":     {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		"exec-2":     {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		"exec-stale": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-2 * time.Second)},
+	}
+	mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
+		AssignmentState: store.AssignmentState{
+			ShardAssignments: assignmentsFor("exec-stale", "0", "1"),
+		},
+		Executors: heartbeats}, nil)
+	mocks.election.EXPECT().Guard().Return(store.NopGuard())
+	mocks.store.EXPECT().AssignShards(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, request store.AssignShardsRequest, _ store.GuardFunc) error {
+			// Moving shard 0 takes both executors the limit allows, so shard 1 stays on the stale executor.
+			require.Len(t, request.ShardAssignments, 2)
+			assert.Equal(t, []string{"1"}, slices.Collect(maps.Keys(request.ShardAssignments["exec-stale"].AssignedShards)))
+			assert.Empty(t, request.ExecutorsToDelete, "the stale executor still holds shard 1")
+			return nil
+		},
+	)
+
+	err := processor.rebalanceShards(context.Background())
+	require.NoError(t, err)
+
+	entries := mocks.observedLogs.FilterMessage("Assignment changes do not fit in one write, deferring the rest to the next round").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, zapcore.InfoLevel, entries[0].Level)
+
+	counters := testScope.Snapshot().Counters()
+	metricTags := "namespace=test-ns,namespace_type=fixed,operation=ShardAssignLoop"
+	assert.Equal(t, int64(1), counters["test.shard_distributor_shard_assign_deferred_shards+"+metricTags].Value())
 }
 
 func TestRebalanceShards_NoActiveExecutors(t *testing.T) {
@@ -1235,63 +1283,33 @@ func TestBuildHandoverStats_MultipleShards(t *testing.T) {
 	assert.Equal(t, expected, stats)
 }
 
-func TestBuildNewAssignmentsState_OnlyChangedExecutors(t *testing.T) {
+func TestBuildNewAssignmentsState(t *testing.T) {
 	mocks := setupProcessorTest(t)
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
 	now := mocks.timeSource.Now().UTC()
-	oldTime := now.Add(-time.Hour)
-
 	namespaceState := &store.NamespaceState{
 		AssignmentState: store.AssignmentState{
 			ShardAssignments: map[string]store.AssignedState{
-				"exec-1": {
-					AssignedShards: map[string]*types.ShardAssignment{
-						"shard-1": {Status: types.AssignmentStatusREADY},
-						"shard-2": {Status: types.AssignmentStatusREADY},
-					},
-					LastUpdated: oldTime,
-				},
-				"exec-2": {
-					AssignedShards: map[string]*types.ShardAssignment{
-						"shard-3": {Status: types.AssignmentStatusREADY},
-					},
-					LastUpdated: oldTime,
-				},
-				"exec-4": {
-					AssignedShards: map[string]*types.ShardAssignment{
-						"shard-6": {Status: types.AssignmentStatusREADY},
-					},
-					LastUpdated: oldTime,
-				},
+				"exec-gaining": {AssignedShards: map[string]*types.ShardAssignment{"shard-1": {Status: types.AssignmentStatusREADY}}},
+				"exec-emptied": {AssignedShards: map[string]*types.ShardAssignment{"shard-2": {Status: types.AssignmentStatusREADY}}},
 			},
 		},
 	}
 
-	currentAssignments := map[string][]string{
-		"exec-1": {"shard-1", "shard-2"}, // unchanged
-		"exec-2": {"shard-3", "shard-4"}, // changed (added shard-4)
-		"exec-3": {"shard-5"},            // new
+	changedAssignments := map[string][]string{
+		"exec-gaining": {"shard-1", "shard-3"},
+		"exec-new":     {"shard-4"},
+		"exec-emptied": nil,
 	}
-	executorsToUnassign := map[string]struct{}{"exec-4": {}}
 
-	newAssignments, changedAssignments := processor.buildNewAssignmentsState(
-		namespaceState,
-		currentAssignments,
-		executorsToUnassign,
-		namespaceState.ShardOwners(),
-		now,
-	)
+	assignedStates := processor.buildNewAssignmentsState(namespaceState, changedAssignments, namespaceState.ShardOwners(), now)
 
-	assert.Len(t, newAssignments, 4)
-	assert.Equal(t, oldTime, newAssignments["exec-1"].LastUpdated)
-	assert.Equal(t, now, newAssignments["exec-2"].LastUpdated)
-	assert.Empty(t, newAssignments["exec-4"].AssignedShards, "cleared assignments")
-
-	changedExecutors := slices.Sorted(maps.Keys(changedAssignments))
-	require.Equal(t, []string{"exec-2", "exec-3", "exec-4"}, changedExecutors)
-	for _, executorID := range changedExecutors {
-		assert.Equal(t, newAssignments[executorID], changedAssignments[executorID])
+	require.Len(t, assignedStates, len(changedAssignments))
+	for executorID, expectedShards := range changedAssignments {
+		assignedState := assignedStates[executorID]
+		assert.ElementsMatch(t, expectedShards, slices.Collect(maps.Keys(assignedState.AssignedShards)), "executor %s", executorID)
+		assert.Equal(t, now, assignedState.LastUpdated, "executor %s", executorID)
 	}
 }
 

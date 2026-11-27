@@ -394,11 +394,21 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, namespaceC
 	p.emitExecutorMetric(namespaceState, metricsLoopScope)
 	loadbalancer.EmitAssignmentImbalanceMetrics(p.sdConfig, p.namespaceCfg.Name, metricsLoopScope, currentAssignments, namespaceState)
 
+	// Executors missing from the plan, such as draining and stale ones, lose their shards. Changes that
+	// do not fit in one write wait for the next round, which plans again from what this round wrote.
+	maxChangedExecutors := p.shardStore.MaxAssignShardsExecutors()
+	assignmentStep := nextAssignmentStep(namespaceState.ShardAssignments, currentAssignments, assignableExecutors, staleExecutors, maxChangedExecutors)
+	if assignmentStep.deferredShards > 0 {
+		p.logger.Info("Assignment changes do not fit in one write, deferring the rest to the next round",
+			tag.Dynamic("deferred-shards", assignmentStep.deferredShards))
+	}
+	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopDeferredShards, int64(assignmentStep.deferredShards))
+
 	previousOwnersByShard := namespaceState.ShardOwners()
 	assignmentTime := p.timeSource.Now().UTC()
-	newAssignments, changedAssignments := p.buildNewAssignmentsState(namespaceState, currentAssignments, executorsToUnassign, previousOwnersByShard, assignmentTime)
+	changedAssignedStates := p.buildNewAssignmentsState(namespaceState, assignmentStep.changedAssignments, previousOwnersByShard, assignmentTime)
 
-	distributionUnchanged := len(changedAssignments) == 0 && len(staleExecutors) == 0
+	distributionUnchanged := len(changedAssignedStates) == 0 && len(assignmentStep.executorsToDelete) == 0
 	if distributionUnchanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
@@ -407,8 +417,8 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, namespaceC
 	p.logger.Info("Applying new shard distribution.")
 
 	assignShardsRequest := store.AssignShardsRequest{
-		ShardAssignments:  changedAssignments,
-		ExecutorsToDelete: slices.Collect(maps.Keys(staleExecutors)),
+		ShardAssignments:  changedAssignedStates,
+		ExecutorsToDelete: assignmentStep.executorsToDelete,
 	}
 	err = p.shardStore.AssignShards(ctx, p.namespaceCfg.Name, assignShardsRequest, p.election.Guard())
 	if err != nil {
@@ -419,7 +429,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, namespaceC
 		p.sdConfig,
 		p.namespaceCfg.Name,
 		previousOwnersByShard,
-		newAssignments,
+		changedAssignedStates,
 		namespaceState.ShardStats,
 		assignmentTime,
 	)
@@ -555,13 +565,12 @@ func findShardsToReassign(
 	return shardsToReassign, currentAssignments
 }
 
-// findExecutorsToUnassign returns the executors whose stored assignment must be cleared
+// findExecutorsToUnassign returns the non-assignable executors that still hold shards, for logging.
 func findExecutorsToUnassign(namespaceState *store.NamespaceState, assignableExecutors map[string]struct{}, staleExecutors map[string]struct{}) map[string]struct{} {
 	executorsToUnassign := make(map[string]struct{})
 
 	for executorID, state := range namespaceState.ShardAssignments {
-		// An already-emptied record needs no write. Without this the executor would
-		// be rewritten on every loop and the distribution would never settle.
+		// An already-emptied record has nothing left to log.
 		if len(state.AssignedShards) == 0 {
 			continue
 		}
@@ -569,9 +578,7 @@ func findExecutorsToUnassign(namespaceState *store.NamespaceState, assignableExe
 			continue
 		}
 
-		// AssignShards deletes a stale executor's whole key prefix in the same
-		// transaction, and orders its deletes before its puts, so emptying one here
-		// would recreate the key that was just removed.
+		// Stale executors are logged separately.
 		if _, isStale := staleExecutors[executorID]; isStale {
 			continue
 		}
@@ -609,66 +616,28 @@ func applyMoves(currentAssignments map[string][]string, moves []plan.Move) error
 	return nil
 }
 
-// buildNewAssignmentsState builds the new assignment of every given executor, and the subset that differs from the stored one.
+// buildNewAssignmentsState builds the assigned state to write for every executor in changedAssignments.
 func (p *namespaceProcessor) buildNewAssignmentsState(
 	namespaceState *store.NamespaceState,
-	currentAssignments map[string][]string,
-	executorsToUnassign map[string]struct{},
+	changedAssignments map[string][]string,
 	previousOwnersByShard map[string]string,
 	now time.Time,
-) (newAssignments map[string]store.AssignedState, changedAssignments map[string]store.AssignedState) {
-	newAssignments = make(map[string]store.AssignedState, len(currentAssignments)+len(executorsToUnassign))
-	changedAssignments = make(map[string]store.AssignedState)
-
-	for executorID, shards := range currentAssignments {
+) map[string]store.AssignedState {
+	assignedStates := make(map[string]store.AssignedState, len(changedAssignments))
+	for executorID, shards := range changedAssignments {
 		assignedShardsMap := make(map[string]*types.ShardAssignment)
 
 		for _, shardID := range shards {
 			assignedShardsMap[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		}
 
-		oldState, existed := namespaceState.ShardAssignments[executorID]
-		sameShards := existed && shardSetsEqual(oldState.AssignedShards, assignedShardsMap)
-
-		lastUpdated := now
-		if sameShards {
-			lastUpdated = oldState.LastUpdated
-		}
-
-		assignedState := store.AssignedState{
+		assignedStates[executorID] = store.AssignedState{
 			AssignedShards:     assignedShardsMap,
-			LastUpdated:        lastUpdated,
+			LastUpdated:        now,
 			ShardHandoverStats: p.buildHandoverStats(namespaceState, previousOwnersByShard, executorID, shards),
 		}
-		newAssignments[executorID] = assignedState
-		if !sameShards {
-			changedAssignments[executorID] = assignedState
-		}
 	}
-
-	for executorID := range executorsToUnassign {
-		emptyAssignment := store.AssignedState{
-			AssignedShards: make(map[string]*types.ShardAssignment),
-			LastUpdated:    now,
-		}
-		newAssignments[executorID] = emptyAssignment
-		changedAssignments[executorID] = emptyAssignment
-	}
-
-	return newAssignments, changedAssignments
-}
-
-func shardSetsEqual(a map[string]*types.ShardAssignment, b map[string]*types.ShardAssignment) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, va := range a {
-		vb, ok := b[k]
-		if !ok || va.GetStatus() != vb.GetStatus() {
-			return false
-		}
-	}
-	return true
+	return assignedStates
 }
 
 func (p *namespaceProcessor) buildHandoverStats(
